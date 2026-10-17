@@ -169,3 +169,12 @@ public struct McpLogEntry: Decodable, Identifiable, Sendable {
     public let instance: String
     public let detail: String
 }
+
+/// One AI app from `soulx mcp clients --json`.
+public struct McpClientApp: Decodable, Identifiable, Sendable {
+    public let id: String
+    public let name: String
+    public let installed: Bool
+    public let state: String          // "connected", "other", "no", "unreadable"
+    public let config: String
+}

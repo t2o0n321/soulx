@@ -1417,3 +1417,308 @@ int soulx_mcp_serve(const char* self_exe) {
 void soulx_mcp_set_self(const char* self_exe) { snprintf(g_self, sizeof(g_self), "%s", self_exe ? self_exe : ""); }
 
 const char* soulx_mcp_tool_names(int i) { return i >= 0 && i < NTOOLS ? k_tools[i].name : NULL; }
+
+// ---------------------------------------------------------------------------
+// One-click connection of AI apps: write SoulX into each app's own MCP configuration
+// ---------------------------------------------------------------------------
+
+// Full JSON output (configuration files are rewritten with every other setting kept).
+static void jwrite(Buf* b, const Json* j, int indent) {
+    char pad[80];
+    int n = indent * 2 < 78 ? indent * 2 : 78;
+    memset(pad, ' ', (size_t)n);
+    pad[n] = '\0';
+    switch (j->type) {
+    case J_NULL: bs(b, "null"); break;
+    case J_BOOL: bs(b, j->b ? "true" : "false"); break;
+    case J_NUM:
+        if (j->num == floor(j->num) && fabs(j->num) < 1e15) bf(b, "%.0f", j->num);
+        else bf(b, "%.17g", j->num);
+        break;
+    case J_STR: bjs(b, j->str); break;
+    case J_ARR:
+    case J_OBJ: {
+        bool obj = j->type == J_OBJ;
+        if (!j->child) { bs(b, obj ? "{}" : "[]"); break; }
+        bs(b, obj ? "{\n" : "[\n");
+        for (Json* c = j->child; c; c = c->next) {
+            bs(b, pad);
+            bs(b, "  ");
+            if (obj) { bjs(b, c->key ? c->key : ""); bs(b, ": "); }
+            jwrite(b, c, indent + 1);
+            bs(b, c->next ? ",\n" : "\n");
+        }
+        bs(b, pad);
+        bs(b, obj ? "}" : "]");
+        break;
+    }
+    }
+}
+
+static Json* jstr_new(const char* key, const char* s) {
+    Json* j = jnew(J_STR);
+    if (!j) return NULL;
+    j->key = key ? strdup(key) : NULL;
+    j->str = strdup(s);
+    return j;
+}
+
+// Removes member |key| of object |o|; true when it was there.
+static bool jremove(Json* o, const char* key) {
+    for (Json** pp = &o->child; *pp; pp = &(*pp)->next) {
+        if ((*pp)->key && !strcmp((*pp)->key, key)) {
+            Json* gone = *pp;
+            *pp = gone->next;
+            gone->next = NULL;
+            jfree(gone);
+            return true;
+        }
+    }
+    return false;
+}
+
+// Object member |key| of |o|, created (empty object) when missing; NULL when it exists but is not an object.
+static Json* jobject_member(Json* o, const char* key) {
+    Json* m = jget(o, key);
+    if (m) return m->type == J_OBJ ? m : NULL;
+    m = jnew(J_OBJ);
+    if (!m) return NULL;
+    m->key = strdup(key);
+    Json** tail = &o->child;
+    while (*tail) tail = &(*tail)->next;
+    *tail = m;
+    return m;
+}
+
+typedef enum { CFG_JSON, CFG_CLI } ClientKind;
+
+typedef struct {
+    const char* id;
+    const char* name;
+    ClientKind kind;
+    const char* config;        // CFG_JSON: path below $HOME
+    const char* servers_key;   // "mcpServers" or "servers" (VS Code)
+    bool vscode_style;         // entries carry "type": "stdio"
+    const char* const* apps;   // presence of any of these (below / or $HOME) means installed
+    const char* restart_hint;
+} McpClient;
+
+static const char* const k_app_desktop[] = { "/Applications/Claude.app", "~/Applications/Claude.app", NULL };
+static const char* const k_app_cursor[] = { "/Applications/Cursor.app", "~/.cursor", NULL };
+static const char* const k_app_vscode[] = { "/Applications/Visual Studio Code.app", "~/Applications/Visual Studio Code.app", NULL };
+static const char* const k_app_windsurf[] = { "/Applications/Windsurf.app", "~/.codeium/windsurf", NULL };
+static const char* const k_app_lmstudio[] = { "/Applications/LM Studio.app", "~/.lmstudio", NULL };
+static const char* const k_app_gemini[] = { "~/.gemini", NULL };
+static const char* const k_app_code_cli[] = { NULL };
+
+static const McpClient k_clients[] = {
+    { "claude-desktop", "Claude Desktop", CFG_JSON, "Library/Application Support/Claude/claude_desktop_config.json",
+      "mcpServers", false, k_app_desktop, "Quit and reopen Claude Desktop." },
+    { "claude-code", "Claude Code", CFG_CLI, ".claude.json", "mcpServers", false, k_app_code_cli,
+      "Start a new Claude Code session." },
+    { "cursor", "Cursor", CFG_JSON, ".cursor/mcp.json", "mcpServers", false, k_app_cursor, "Restart Cursor." },
+    { "vscode", "VS Code", CFG_JSON, "Library/Application Support/Code/User/mcp.json", "servers", true, k_app_vscode,
+      "Reload VS Code (its MCP servers list shows SoulX)." },
+    { "windsurf", "Windsurf", CFG_JSON, ".codeium/windsurf/mcp_config.json", "mcpServers", false, k_app_windsurf,
+      "Restart Windsurf." },
+    { "lmstudio", "LM Studio", CFG_JSON, ".lmstudio/mcp.json", "mcpServers", false, k_app_lmstudio, "Restart LM Studio." },
+    { "gemini", "Gemini CLI", CFG_JSON, ".gemini/settings.json", "mcpServers", false, k_app_gemini,
+      "Start a new Gemini CLI session." },
+};
+#define NCLIENTS ((int)(sizeof(k_clients) / sizeof(k_clients[0])))
+
+// $HOME first (tests point it elsewhere), else the account's home.
+static bool home_dir(char* out, size_t cap) {
+    const char* h = getenv("HOME");
+    if (h && h[0] == '/') { snprintf(out, cap, "%s", h); return true; }
+    return false;
+}
+
+static void expand(const char* p, char* out, size_t cap) {
+    char home[PATH_MAX] = "";
+    if (p[0] == '~' && home_dir(home, sizeof(home))) snprintf(out, cap, "%s%s", home, p + 1);
+    else snprintf(out, cap, "%s", p);
+}
+
+// The client's command-line tool (Claude Code): GUI apps do not get the shell's PATH, so look in the usual places.
+static bool find_cli(char* out, size_t cap) {
+    static const char* const where[] = { "~/.local/bin/claude", "~/.claude/local/claude", "/opt/homebrew/bin/claude",
+                                         "/usr/local/bin/claude", "~/.npm-global/bin/claude", "~/.bun/bin/claude", NULL };
+    const char* forced = getenv("SOULX_MCP_CLIENT_CLI");     // tests
+    if (forced) {
+        snprintf(out, cap, "%s", forced);
+        return forced[0] && access(out, X_OK) == 0;
+    }
+    for (int i = 0; where[i]; i++) {
+        expand(where[i], out, cap);
+        if (access(out, X_OK) == 0) return true;
+    }
+    return false;
+}
+
+static bool client_installed(const McpClient* c) {
+    char p[PATH_MAX];
+    if (c->kind == CFG_CLI) return find_cli(p, sizeof(p));
+    for (int i = 0; c->apps[i]; i++) {
+        expand(c->apps[i], p, sizeof(p));
+        if (soulx_path_exists(p)) return true;
+    }
+    char home[PATH_MAX];
+    if (home_dir(home, sizeof(home))) {
+        snprintf(p, sizeof(p), "%s/%s", home, c->config);
+        if (soulx_path_exists(p)) return true;
+    }
+    return false;
+}
+
+static int config_path(const McpClient* c, char* out, size_t cap) {
+    char home[PATH_MAX];
+    if (!home_dir(home, sizeof(home))) return -1;
+    int n = snprintf(out, cap, "%s/%s", home, c->config);
+    return (n > 0 && (size_t)n < cap) ? 0 : -1;
+}
+
+// "connected" (points at this soulx), "other" (a soulx entry pointing elsewhere), "no", or "unreadable".
+static const char* client_state(const McpClient* c, const char* exe) {
+    char path[PATH_MAX];
+    if (config_path(c, path, sizeof(path)) != 0) return "no";
+    char* data = NULL;
+    size_t len = 0;
+    if (soulx_read_file(path, &data, &len) != 0) return "no";
+    Json* root = jparse(data);
+    free(data);
+    if (!root || root->type != J_OBJ) { jfree(root); return "unreadable"; }
+    Json* servers = jget(root, c->servers_key);
+    Json* entry = servers && servers->type == J_OBJ ? jget(servers, "soulx") : NULL;
+    const char* state = "no";
+    if (entry && entry->type == J_OBJ) {
+        const char* cmd = jstr(entry, "command");
+        state = cmd && !strcmp(cmd, exe) ? "connected" : "other";
+    }
+    jfree(root);
+    return state;
+}
+
+static const McpClient* find_client(const char* id) {
+    for (int i = 0; i < NCLIENTS; i++) if (!strcmp(k_clients[i].id, id)) return &k_clients[i];
+    return NULL;
+}
+
+// Writes or removes the "soulx" entry in a JSON configuration, keeping everything else.
+static int edit_json_config(const McpClient* c, const char* exe, bool add, char* msg, size_t cap) {
+    char path[PATH_MAX];
+    if (config_path(c, path, sizeof(path)) != 0) { snprintf(msg, cap, "no home folder"); return -1; }
+    char* data = NULL;
+    size_t len = 0;
+    Json* root = NULL;
+    bool existed = soulx_read_file(path, &data, &len) == 0;
+    if (existed) {
+        const char* p = data;
+        skip_ws(&p);
+        root = *p ? jparse(data) : jnew(J_OBJ);          // an empty file counts as {}
+        if (!root || root->type != J_OBJ) {
+            snprintf(msg, cap, "%s is not valid JSON; SoulX leaves it alone (fix it or add SoulX by hand)", path);
+            jfree(root);
+            free(data);
+            return -1;
+        }
+    } else {
+        if (!add) { snprintf(msg, cap, "not connected"); return 0; }
+        root = jnew(J_OBJ);
+    }
+    Json* servers = jobject_member(root, c->servers_key);
+    if (!servers) {
+        snprintf(msg, cap, "\"%s\" in %s is not an object; SoulX leaves the file alone", c->servers_key, path);
+        jfree(root);
+        free(data);
+        return -1;
+    }
+    jremove(servers, "soulx");
+    if (add) {
+        Json* e = jnew(J_OBJ);
+        e->key = strdup("soulx");
+        Json** t = &e->child;
+        if (c->vscode_style) { *t = jstr_new("type", "stdio"); t = &(*t)->next; }
+        *t = jstr_new("command", exe);
+        t = &(*t)->next;
+        Json* args = jnew(J_ARR);
+        args->key = strdup("args");
+        args->child = jstr_new(NULL, "mcp");
+        *t = args;
+        Json** tail = &servers->child;
+        while (*tail) tail = &(*tail)->next;
+        *tail = e;
+    }
+    // keep a copy of the user's file before SoulX first changes it
+    if (existed) {
+        char backup[PATH_MAX + 16];
+        snprintf(backup, sizeof(backup), "%s.soulx-backup", path);
+        if (!soulx_path_exists(backup)) (void)soulx_write_file_atomic(backup, data, len);
+    }
+    free(data);
+    Buf b = { 0 };
+    jwrite(&b, root, 0);
+    bs(&b, "\n");
+    jfree(root);
+    char dir[PATH_MAX];
+    snprintf(dir, sizeof(dir), "%s", path);
+    char* slash = strrchr(dir, '/');
+    if (slash) { *slash = '\0'; soulx_mkdirs(dir); }
+    struct stat st;
+    mode_t mode = stat(path, &st) == 0 ? (st.st_mode & 0777) : 0644;
+    int rc = soulx_write_file_atomic(path, b.s, b.len);
+    if (rc == 0) chmod(path, mode);
+    free(b.s);
+    if (rc != 0) { snprintf(msg, cap, "cannot write %s", path); return -1; }
+    snprintf(msg, cap, "%s", add ? c->restart_hint : "removed");
+    return 0;
+}
+
+static int edit_cli_config(const McpClient* c, const char* exe, bool add, char* msg, size_t cap) {
+    (void)c;
+    char cli[PATH_MAX];
+    if (!find_cli(cli, sizeof(cli))) { snprintf(msg, cap, "its command-line tool was not found"); return -1; }
+    // remove first so that "add" also repairs an entry that points elsewhere
+    const char* rm[] = { cli, "mcp", "remove", "-s", "user", "soulx", NULL };
+    SoulXCmd cmd;
+    memset(&cmd, 0, sizeof(cmd));
+    cmd.argv = rm;
+    cmd.timeout_ms = 30000;
+    SoulXCmdResult res;
+    memset(&res, 0, sizeof(res));
+    soulx_run(&cmd, &res);
+    soulx_cmd_result_free(&res);
+    if (!add) { snprintf(msg, cap, "removed"); return 0; }
+    const char* ad[] = { cli, "mcp", "add", "-s", "user", "soulx", "--", exe, "mcp", NULL };
+    cmd.argv = ad;
+    memset(&res, 0, sizeof(res));
+    int st = soulx_run(&cmd, &res);
+    if (st != 0) snprintf(msg, cap, "it refused: %.200s", res.err && res.err[0] ? res.err : (res.out ? res.out : ""));
+    else snprintf(msg, cap, "%s", c->restart_hint);
+    soulx_cmd_result_free(&res);
+    return st == 0 ? 0 : -1;
+}
+
+int soulx_mcp_client_count(void) { return NCLIENTS; }
+
+int soulx_mcp_client_info(int i, const char* exe, SoulXMcpClientInfo* out) {
+    if (i < 0 || i >= NCLIENTS || !out) return -1;
+    const McpClient* c = &k_clients[i];
+    memset(out, 0, sizeof(*out));
+    snprintf(out->id, sizeof(out->id), "%s", c->id);
+    snprintf(out->name, sizeof(out->name), "%s", c->name);
+    out->installed = client_installed(c);
+    snprintf(out->state, sizeof(out->state), "%s", client_state(c, exe));
+    config_path(c, out->config, sizeof(out->config));
+    return 0;
+}
+
+int soulx_mcp_client_connect(const char* id, const char* exe, bool add, char* msg, size_t cap) {
+    const McpClient* c = find_client(id ? id : "");
+    if (!c) { snprintf(msg, cap, "unknown app '%s'", id ? id : ""); return -1; }
+    int rc = c->kind == CFG_CLI ? edit_cli_config(c, exe, add, msg, cap) : edit_json_config(c, exe, add, msg, cap);
+    char detail[300];
+    snprintf(detail, sizeof(detail), "%s %s: %s", add ? "connect" : "disconnect", c->id, msg);
+    soulx_mcp_audit("app", NULL, detail, rc == 0);
+    return rc;
+}

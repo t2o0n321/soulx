@@ -91,6 +91,16 @@ int  soulx_mcp_serve(const char* self_exe);              // JSON-RPC on stdin/st
 void soulx_mcp_set_self(const char* self_exe);           // tests: the soulx the tools run
 void soulx_mcp_call_tool(const char* name, const char* args_json, char** result_json, bool* is_error);
 const char* soulx_mcp_tool_names(int i);                 // NULL past the end
+typedef struct {
+    char id[32];                 // "cursor" ...
+    char name[64];               // "Cursor" ...
+    bool installed;
+    char state[16];              // "connected", "other" (points to another soulx), "no", "unreadable"
+    char config[1024];           // the file SoulX writes
+} SoulXMcpClientInfo;
+int  soulx_mcp_client_count(void);
+int  soulx_mcp_client_info(int i, const char* exe, SoulXMcpClientInfo* out);
+int  soulx_mcp_client_connect(const char* id, const char* exe, bool add, char* msg, size_t cap);
 
 // scripts.c - each instance's Lua scripts (~/Documents/SoulX Scripts/<instance>/, root overridable by $SOULX_SCRIPTS)
 typedef struct {

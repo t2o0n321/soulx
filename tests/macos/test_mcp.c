@@ -108,6 +108,63 @@ static void test_calls(void) {
     CHECK(n == 22);
 }
 
+// One-click connection: SoulX's entry is added to and removed from an app's JSON settings, everything else stays,
+// the original is backed up, and a damaged file is never touched.  points to a temporary folder.
+static void test_clients(void) {
+    char fake[] = "/private/tmp/soulx-test-mcp-home-XXXXXX";
+    if (!mkdtemp(fake)) return;
+    char* old_home = getenv("HOME") ? strdup(getenv("HOME")) : NULL;
+    setenv("HOME", fake, 1);
+    char dir[PATH_MAX], cfg[PATH_MAX], bak[PATH_MAX + 16];
+    snprintf(dir, sizeof(dir), "%s/.cursor", fake);
+    soulx_mkdirs(dir);
+    snprintf(cfg, sizeof(cfg), "%s/mcp.json", dir);
+    static const char orig[] = "{\"mcpServers\": {\"other\": {\"command\": \"node\", \"env\": {\"K\": \"v\"}}}, \"n\": 1.5, \"u\": \"\\u4e2d\"}";
+    CHECK(soulx_write_file_atomic(cfg, orig, sizeof(orig) - 1) == 0);
+    char msg[512];
+    CHECK(soulx_mcp_client_connect("cursor", "/opt/soulx", true, msg, sizeof(msg)) == 0);
+    char* text = NULL;
+    size_t len = 0;
+    CHECK(soulx_read_file(cfg, &text, &len) == 0 && text);
+    if (text) {
+        CHECK(strstr(text, "\"soulx\": {") && strstr(text, "\"command\": \"/opt/soulx\"") && strstr(text, "\"mcp\""));
+        CHECK(strstr(text, "\"other\"") && strstr(text, "\"K\": \"v\"") && strstr(text, "\"n\": 1.5") && strstr(text, "中"));
+    }
+    free(text);
+    snprintf(bak, sizeof(bak), "%s.soulx-backup", cfg);
+    text = NULL;
+    CHECK(soulx_read_file(bak, &text, &len) == 0 && text && !strcmp(text, orig));    // the user's original
+    free(text);
+    int n = soulx_mcp_client_count(), found = 0;
+    for (int i = 0; i < n; i++) {
+        SoulXMcpClientInfo ci;
+        if (soulx_mcp_client_info(i, "/opt/soulx", &ci) == 0 && !strcmp(ci.id, "cursor")) {
+            found = 1;
+            CHECK(ci.installed && !strcmp(ci.state, "connected"));
+        }
+        if (soulx_mcp_client_info(i, "/elsewhere/soulx", &ci) == 0 && !strcmp(ci.id, "cursor")) CHECK(!strcmp(ci.state, "other"));
+    }
+    CHECK(found);
+    CHECK(soulx_mcp_client_connect("cursor", "/opt/soulx", false, msg, sizeof(msg)) == 0);
+    text = NULL;
+    CHECK(soulx_read_file(cfg, &text, &len) == 0 && text && !strstr(text, "soulx") && strstr(text, "\"other\""));
+    free(text);
+    // a damaged file is left exactly as it is
+    static const char broken[] = "{ \"mcpServers\": { broken";
+    CHECK(soulx_write_file_atomic(cfg, broken, sizeof(broken) - 1) == 0);
+    CHECK(soulx_mcp_client_connect("cursor", "/opt/soulx", true, msg, sizeof(msg)) == -1 && strstr(msg, "not valid JSON"));
+    text = NULL;
+    CHECK(soulx_read_file(cfg, &text, &len) == 0 && text && !strcmp(text, broken));
+    free(text);
+    // a missing file is created; an unknown app is refused
+    unlink(cfg);
+    unlink(bak);
+    CHECK(soulx_mcp_client_connect("cursor", "/opt/soulx", true, msg, sizeof(msg)) == 0 && soulx_path_exists(cfg));
+    CHECK(soulx_mcp_client_connect("nope", "/opt/soulx", true, msg, sizeof(msg)) == -1);
+    if (old_home) { setenv("HOME", old_home, 1); free(old_home); } else unsetenv("HOME");
+    nftw(fake, rm_cb, 32, FTW_DEPTH | FTW_PHYS);
+}
+
 int main(void) {
     char home[] = "/private/tmp/soulx-test-mcp-XXXXXX";
     char scripts[] = "/private/tmp/soulx-test-mcp-scripts-XXXXXX";
@@ -119,6 +176,7 @@ int main(void) {
     soulx_mcp_set_self("/usr/bin/false");               // no tool here may need to run soulx
     test_config();
     test_calls();
+    test_clients();
     nftw(home, rm_cb, 32, FTW_DEPTH | FTW_PHYS);
     nftw(scripts, rm_cb, 32, FTW_DEPTH | FTW_PHYS);
     printf("%d checks, %d failures\n", g_checks, g_failures);

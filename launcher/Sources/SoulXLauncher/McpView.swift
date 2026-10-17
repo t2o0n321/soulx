@@ -11,6 +11,9 @@ struct McpView: View {
     @EnvironmentObject var model: AppModel
     @State private var log: [McpLogEntry] = []
     @State private var copied = false
+    @State private var clients: [McpClientApp] = []
+    @State private var note: String?
+    @State private var busyClient: String?
 
     var body: some View {
         Form {
@@ -23,6 +26,26 @@ struct McpView: View {
                     Label(L("Local only: the AI app starts SoulX and talks to it directly. No network port is opened."),
                           systemImage: "lock.shield")
                         .font(.callout).foregroundStyle(.secondary)
+                }
+                Section {
+                    let found = clients.filter(\.installed)
+                    if found.isEmpty {
+                        Text(L("No supported AI app was found on this Mac. Install one (for example an AI desktop app or code editor with MCP support), or set it up by hand below."))
+                            .foregroundStyle(.secondary)
+                    }
+                    ForEach(found) { app in clientRow(app) }
+                    if let note {
+                        Label(note, systemImage: "arrow.clockwise.circle").foregroundStyle(.blue)
+                    }
+                    DisclosureGroup(L("Set up by hand (advanced)")) {
+                        connectRow(L("Command and argument (stdio)"), "\"\(c.command)\" mcp")
+                        connectRow(L("As JSON (most AI apps)"),
+                                   "\"soulx\": { \"command\": \"\(c.command)\", \"args\": [\"mcp\"] }")
+                    }
+                } header: {
+                    Text(L("Connect an AI app"))
+                } footer: {
+                    Text(L("SoulX adds itself to the app's own settings and keeps everything else in them (the old file is backed up first)."))
                 }
                 Section(L("Instances the AI may use")) {
                     Picker(L("Instances the AI may use"), selection: Binding(
@@ -51,11 +74,6 @@ struct McpView: View {
                     permission(L("Run Lua code it writes"), L("Always sandboxed: it can operate the instance but cannot read or change files on your Mac."), "lua", c.allowLua)
                     LabeledContent(L("Never")) { Text(L("Create, delete or change instances; setup")).foregroundStyle(.secondary) }
                 }
-                Section(L("Connect an AI app")) {
-                    connectRow(L("Command and argument (stdio)"), "\"\(c.command)\" mcp")
-                    connectRow(L("As JSON (most AI apps)"),
-                               "\"soulx\": { \"command\": \"\(c.command)\", \"args\": [\"mcp\"] }")
-                }
                 Section(L("Recent activity")) {
                     if log.isEmpty {
                         Text(L("No AI activity yet.")).foregroundStyle(.secondary)
@@ -82,6 +100,7 @@ struct McpView: View {
             await model.loadMcp()
             while !Task.isCancelled {
                 log = await model.mcpLog()
+                clients = await model.mcpClients()
                 try? await Task.sleep(nanoseconds: 3_000_000_000)
             }
         }
@@ -91,6 +110,47 @@ struct McpView: View {
         Toggle(isOn: Binding(get: { on }, set: { v in Task { await model.setMcp([v ? "--allow" : "--deny", key]) } })) {
             Text(title)
             if let note { Text(note) }
+        }
+    }
+
+    private func clientRow(_ app: McpClientApp) -> some View {
+        HStack {
+            Image(systemName: "app.connected.to.app.below.fill").foregroundStyle(.secondary).frame(width: 20)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(app.name)
+                Text(stateText(app.state)).font(.caption)
+                    .foregroundStyle(app.state == "connected" ? Color.green : app.state == "unreadable" ? Color.orange : Color.secondary)
+            }
+            Spacer()
+            if busyClient == app.id {
+                ProgressView().controlSize(.small)
+            } else if app.state == "connected" {
+                Button(L("Disconnect")) { run(app, connect: false) }
+            } else if app.state != "unreadable" {
+                Button(app.state == "other" ? L("Repair") : L("Connect")) { run(app, connect: true) }
+                    .buttonStyle(.borderedProminent)
+            }
+        }
+    }
+
+    private func stateText(_ s: String) -> String {
+        switch s {
+        case "connected": return L("Connected")
+        case "other": return L("Connected to another copy of SoulX")
+        case "unreadable": return L("Its settings file is damaged; SoulX does not touch it")
+        default: return L("Not connected")
+        }
+    }
+
+    private func run(_ app: McpClientApp, connect: Bool) {
+        busyClient = app.id
+        Task {
+            if let msg = await model.connectClient(app.id, connect: connect) {
+                note = connect ? String(format: L("%@ is connected. Restart it to start using SoulX."), app.name) : nil
+                _ = msg
+            }
+            clients = await model.mcpClients()
+            busyClient = nil
         }
     }
 

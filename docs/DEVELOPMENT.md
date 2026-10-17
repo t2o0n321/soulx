@@ -72,7 +72,7 @@ fakes stand in for the engine, adb and the console.
 | `test_apps` | `.apk` / `.xapk` / `.apks` / `.apkm` handling |
 | `test_lua` | the Lua API, including the sandbox for AI code |
 | `test_scripts` | per-instance scripts, migration, the language setting |
-| `test_mcp` | MCP settings, permissions, the off switch, the audit log |
+| `test_mcp` | MCP settings, permissions, the off switch, the audit log, connecting AI apps |
 
 Run one test with `ctest -R registry --output-on-failure` in `build/macos`.
 

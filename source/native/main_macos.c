@@ -3567,6 +3567,47 @@ static int cmd_mcp(const CliCommand* self, const CliArgs* a, const CliGlobal* g)
         free(data);
         return CLI_EXIT_OK;
     }
+    if (!strcmp(sub, "clients")) {
+        bool json = a->val[MCP_JSON] != NULL;
+        if (json) printf("[");
+        for (int i = 0; i < soulx_mcp_client_count(); i++) {
+            SoulXMcpClientInfo ci;
+            if (soulx_mcp_client_info(i, exe, &ci) != 0) continue;
+            if (json) {
+                printf("%s{\"id\": ", i ? ", " : "");
+                json_str(stdout, ci.id);
+                printf(", \"name\": ");
+                json_str(stdout, ci.name);
+                printf(", \"installed\": %s, \"state\": ", ci.installed ? "true" : "false");
+                json_str(stdout, ci.state);
+                printf(", \"config\": ");
+                json_str(stdout, ci.config);
+                printf("}");
+            } else {
+                printf("  %-16s %-15s %s\n", ci.id, ci.installed ? "installed" : "not installed",
+                       !strcmp(ci.state, "connected") ? "connected" : !strcmp(ci.state, "other") ? "connected to another soulx" :
+                       !strcmp(ci.state, "unreadable") ? "configuration unreadable" : "");
+            }
+        }
+        if (json) printf("]\n");
+        return CLI_EXIT_OK;
+    }
+    if (!strcmp(sub, "connect") || !strcmp(sub, "disconnect")) {
+        bool add = !strcmp(sub, "connect");
+        if (a->npos != 2) return usage_error(self, "which app? see: soulx mcp clients");
+        char msg[512] = "";
+        if (soulx_mcp_client_connect(a->pos[1], exe, add, msg, sizeof msg) != 0) {
+            soulx_log(SOULX_LOG_ERROR, "could not %s %s: %s", sub, a->pos[1], msg);
+            return CLI_EXIT_FAIL;
+        }
+        if (add) {                                  // connecting means wanting it: switch AI control on
+            SoulXMcpConfig c;
+            soulx_mcp_config_load(&c);
+            if (!c.enabled) { c.enabled = true; soulx_mcp_config_save(&c); }
+        }
+        printf("%s %s. %s\n", add ? "Connected" : "Disconnected", a->pos[1], add ? msg : "");
+        return CLI_EXIT_OK;
+    }
     if (!strcmp(sub, "setup")) {
         printf("Connect an AI client to SoulX (it starts `%s mcp` and talks to it over stdin/stdout;\n"
                "no network port is opened):\n\n", exe);
@@ -3578,7 +3619,7 @@ static int cmd_mcp(const CliCommand* self, const CliArgs* a, const CliGlobal* g)
                c.enabled ? "" : "Turn it on in the launcher (AI control) or: soulx mcp config --enable");
         return CLI_EXIT_OK;
     }
-    return usage_error(self, "unknown action '%s' (use serve, config, log or setup)", sub);
+    return usage_error(self, "unknown action '%s' (use serve, config, log, clients, connect, disconnect or setup)", sub);
 }
 
 enum { LANGUAGE_JSON };
@@ -4122,7 +4163,10 @@ static const CliCommand k_commands[] = {
       "                           lua (code the AI writes; always sandboxed, no access to your files)\n"
       "    --json                 print the settings as JSON\n"
       "  log [-n N] [--json]    the last N tool calls (all of them are logged)\n"
-      "  setup                  how to connect an AI app\n"
+      "  clients [--json]       AI apps found on this Mac and whether they are connected\n"
+      "  connect APP            add SoulX to that app's settings and turn AI control on\n"
+      "  disconnect APP         remove SoulX from that app's settings\n"
+      "  setup                  how to connect an AI app by hand\n"
       "\n"
       "Never available to the AI: creating, deleting or changing instances, and setup.\n",
       k_mcp_opts, NOPTS(k_mcp_opts), CLI_INTERLEAVED, false },

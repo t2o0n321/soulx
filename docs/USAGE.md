@@ -556,7 +556,19 @@ your scripts and run Lua it writes.
 **It is off by default.** Turn it on in the launcher (**AI control** in the sidebar) or with
 `soulx mcp config --enable`. Then connect your AI app once:
 
-In the AI app, add an MCP server (stdio) whose command is the `soulx` executable and whose argument is `mcp`. In
+**The easy way:** in the launcher's AI control page, press **Connect** next to your AI app (the page lists the
+supported AI apps found on this Mac), then restart that app. Or from the terminal:
+
+```bash
+soulx mcp clients            # AI apps found on this Mac and whether they are connected
+soulx mcp connect cursor     # add SoulX to that app's settings and turn AI control on
+soulx mcp disconnect cursor  # take it out again
+```
+
+SoulX changes only its own entry in the app's settings file, keeps everything else, backs the file up first
+(`<file>.soulx-backup`) and leaves a file it cannot parse untouched.
+
+**By hand:** in the AI app, add an MCP server (stdio) whose command is the `soulx` executable and whose argument is `mcp`. In
 an app's JSON configuration that is:
 
 ```json
@@ -606,7 +618,9 @@ an app's JSON configuration that is:
 | `soulx mcp` | the server (your AI app runs this) |
 | `soulx mcp config [--enable\|--disable] [--instances "*"\|a,b] [--allow P,...] [--deny P,...] [--json]` | settings; permissions `start-stop`, `install`, `scripts`, `lua` |
 | `soulx mcp log [-n N] [--json]` | the last N calls |
-| `soulx mcp setup` | how to connect an AI app |
+| `soulx mcp clients [--json]` | AI apps found on this Mac and whether they are connected |
+| `soulx mcp connect APP` / `disconnect APP` | add SoulX to an app's settings (and turn AI control on), or remove it |
+| `soulx mcp setup` | how to connect an AI app by hand |
 
 ## Where SoulX keeps its data
 

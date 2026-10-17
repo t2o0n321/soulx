@@ -164,6 +164,19 @@ final class AppModel: ObservableObject {
         catch { alert = error.localizedDescription }
     }
 
+    func mcpClients() async -> [McpClientApp] {
+        (try? await cli?.json([McpClientApp].self, ["mcp", "clients", "--json"])) ?? []
+    }
+
+    /// One click: add SoulX to the app's settings (also turns AI control on). Returns what to do next, or nil.
+    func connectClient(_ id: String, connect: Bool) async -> String? {
+        guard let cli else { return nil }
+        let r = await cli.run(["mcp", connect ? "connect" : "disconnect", id])
+        await loadMcp()
+        if !r.ok { alert = r.message; return nil }
+        return r.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     func mcpLog() async -> [McpLogEntry] {
         (try? await cli?.json([McpLogEntry].self, ["mcp", "log", "-n", "50", "--json"])) ?? []
     }
