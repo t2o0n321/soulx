@@ -21,7 +21,8 @@ struct ContentView: View {
                                 Text(L("AI control"))
                                 Spacer()
                                 Text(model.mcp?.enabled == true ? L("On") : L("Off"))
-                                    .font(.caption).foregroundStyle(.secondary)
+                                    .font(.caption.bold())
+                                    .foregroundStyle(model.mcp?.enabled == true ? Color.green : Color.secondary)
                             }
                         } icon: {
                             Image(systemName: "sparkles")
@@ -81,9 +82,17 @@ struct ContentView: View {
             SetupView(runtime: rt)
         } else if let inst = model.instance(model.selection) {
             InstanceDetailView(instance: inst).id(inst.name)
+        } else if model.instances.isEmpty {
+            ContentUnavailableView {
+                Label(L("No instances yet."), systemImage: "iphone")
+            } description: {
+                Text(L("An instance is one Android phone. Create one, start it, then install your game from its window."))
+            } actions: {
+                Button(L("Create instance")) { creating = true }
+                    .buttonStyle(.borderedProminent).controlSize(.large)
+            }
         } else {
-            ContentUnavailableView(model.instances.isEmpty ? L("No instances yet.") : L("Select an instance."),
-                                   systemImage: "iphone")
+            ContentUnavailableView(L("Select an instance."), systemImage: "iphone")
         }
     }
 }
@@ -333,31 +342,64 @@ struct SetupView: View {
                 LabeledContent(L("Download size"),
                                value: ByteCountFormatter.string(fromByteCount: runtime.missingBytes, countStyle: .file))
                 ForEach(runtime.packages.filter { $0.kind != "image" || $0.key == runtime.defaultImage }, id: \.key) { p in
-                    LabeledContent(p.description ?? p.key, value: p.installed ? "✓" : "—")
+                    LabeledContent(p.description ?? p.key) {
+                        if p.installed {
+                            Label(L("Installed"), systemImage: "checkmark.circle.fill").foregroundStyle(.green)
+                        } else {
+                            Text(L("Not installed")).foregroundStyle(.secondary)
+                        }
+                    }
                 }
                 Toggle(L("I accept the Android SDK License Agreement"), isOn: $accepted)
                 Link(L("Read the license"), destination: URL(string: "https://developer.android.com/studio/terms")!)
                 HStack {
                     Spacer()
-                    if model.settingUp { ProgressView().controlSize(.small); Text(L("Installing…")) }
                     Button(L("Install")) { model.installRuntime() }
                         .disabled(!accepted || model.settingUp)
                         .keyboardShortcut(.defaultAction)
                 }
             }
-            if !model.setupLog.isEmpty {
-                Section {
-                    ScrollView {
-                        Text(model.setupLog.suffix(200).joined(separator: "\n"))
-                            .font(.system(.caption, design: .monospaced))
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .textSelection(.enabled)
+            if model.settingUp || !model.setupLog.isEmpty {
+                Section(L("Progress")) {
+                    if let step = stepLine { Text(step) }
+                    if let (pct, text) = progress, model.settingUp {
+                        ProgressView(value: Double(pct), total: 100) {
+                            Text(text).font(.callout).foregroundStyle(.secondary).monospacedDigit()
+                        }
+                    } else if model.settingUp {
+                        HStack { ProgressView().controlSize(.small); Text(L("Installing…")).foregroundStyle(.secondary) }
+                    } else if let last = model.setupLog.last {
+                        Text(clean(last))
                     }
-                    .frame(minHeight: 160)
+                    DisclosureGroup(L("Details")) {
+                        ScrollView {
+                            Text(model.setupLog.suffix(200).map(clean).joined(separator: "\n"))
+                                .font(.system(.caption, design: .monospaced))
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .textSelection(.enabled)
+                        }
+                        .frame(minHeight: 140, maxHeight: 220)
+                    }
                 }
             }
         }
         .formStyle(.grouped)
+    }
+
+    private func clean(_ line: String) -> String {
+        line.hasPrefix("soulx: ") ? String(line.dropFirst(7)) : line
+    }
+
+    /// "[2/3] Android SDK Platform-Tools ..." : which package is being installed.
+    private var stepLine: String? {
+        model.setupLog.last(where: { clean($0).hasPrefix("[") }).map(clean)
+    }
+
+    /// The latest "...  45% (187 MB / 416 MB)" line and its percentage.
+    private var progress: (Int, String)? {
+        guard let line = model.setupLog.last, let r = line.range(of: #"(\d{1,3})%"#, options: .regularExpression),
+              let pct = Int(line[r].dropLast()) else { return nil }
+        return (min(pct, 100), clean(line))
     }
 }
 

@@ -21,6 +21,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/ioctl.h>
+#include <time.h>
 #include <unistd.h>
 
 #include "soulx_mac.h"
@@ -218,7 +219,27 @@ void soulx_log(int level, const char* fmt, ...) {
 }
 
 void soulx_status_line(const char* fmt, ...) {
-    if (!fmt || !isatty(STDERR_FILENO)) return;
+    if (!fmt) return;
+    if (!isatty(STDERR_FILENO)) {
+        // The launcher reads the output through a pipe: a plain line at most once a second, which it shows in place
+        // of the previous one. Others (scripts, logs) get no progress lines.
+        static struct timespec last;
+        struct timespec now;
+        if (!getenv("SOULX_FROM_LAUNCHER")) return;
+        clock_gettime(CLOCK_MONOTONIC, &now);
+        if (last.tv_sec && (now.tv_sec - last.tv_sec) * 1000 + (now.tv_nsec - last.tv_nsec) / 1000000 < 1000) return;
+        last = now;
+        char line[STATUS_BUF];
+        va_list ap;
+        va_start(ap, fmt);
+        int n = vsnprintf(line, sizeof(line), fmt, ap);
+        va_end(ap);
+        if (n < 0) return;
+        for (char* c = line; *c; c++) if (*c == '\n' || *c == '\r') *c = ' ';
+        fprintf(stderr, "soulx: %s\n", line);
+        fflush(stderr);
+        return;
+    }
 
     char raw[STATUS_BUF];
     va_list ap;

@@ -199,7 +199,7 @@ final class AppModel: ObservableObject {
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 // progress lines repeat with new numbers: replace the previous one of the same package
-                if let last = self.setupLog.last, last.hasPrefix(line.prefix(18)), line.contains("%") {
+                if let last = self.setupLog.last, last.contains("%"), last.hasPrefix(line.prefix(18)), line.contains("%") {
                     self.setupLog[self.setupLog.count - 1] = line
                 } else {
                     self.setupLog.append(line)

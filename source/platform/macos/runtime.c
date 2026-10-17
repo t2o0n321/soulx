@@ -17,6 +17,7 @@
 #include <limits.h>
 #include <poll.h>
 #include <stdarg.h>
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -863,9 +864,15 @@ static int license_text(const char* id, LicenseDocs* docs, char** text, char* so
     return -1;
 }
 
-static void show_license(const char* id, const char* text, const char* saved_path, const char* required_by) {
+static void show_license(const char* id, const char* text, const char* saved_path, const char* required_by,
+                         bool brief) {
     static const char rule[] = "------------------------------------------------------------------------";
     soulx_status_done();
+    if (brief) {                        // already accepted (--accept-licenses) by someone who saw it elsewhere
+        fprintf(stderr, "License: %s (required by: %s). Full text: %s\n", id, required_by, text ? saved_path : TERMS_URL);
+        fflush(stderr);
+        return;
+    }
     fprintf(stderr, "\n%s\nLicense: %s (required by: %s)\n%s\n", rule, id, required_by, rule);
     if (text) {
         const char* p = text;
@@ -1029,7 +1036,8 @@ static int ensure_licenses(const SoulXPackage* const* pkgs, size_t count, const 
                          id);
             }
         }
-        show_license(id, text, saved, required_by);
+        // the launcher asks for the agreement on its own page (with a link to the text): no need to print it
+        show_license(id, text, saved, required_by, opts->accept_licenses && !isatty(STDERR_FILENO));
 
         const char* how = NULL;
         if (opts->accept_licenses) {
@@ -1138,14 +1146,48 @@ static int find_verified_zip(const SoulXPackage* p, char* zip_out, size_t cap) {
     return -1;
 }
 
-static int run_curl_download(const char* part, const char* url) {
-    const char* progress = isatty(STDERR_FILENO) ? "--progress-bar" : "-sS";
+typedef struct {
+    const char* part;
+    const char* key;
+    uint64_t total;
+    volatile bool done;
+} DownloadWatch;
+
+// Without a terminal curl shows nothing: report the size of the growing .part file instead (the launcher shows it).
+static void* watch_download(void* arg) {
+    DownloadWatch* w = arg;
+    char total_s[32];
+    format_bytes(w->total, total_s, sizeof(total_s));
+    while (!w->done) {
+        struct stat st;
+        if (stat(w->part, &st) == 0 && w->total > 0) {
+            char done_s[32];
+            format_bytes((uint64_t)st.st_size, done_s, sizeof(done_s));
+            soulx_status_line("Downloading %s... %d%% (%s / %s)", w->key, (int)((uint64_t)st.st_size * 100 / w->total),
+                              done_s, total_s);
+        }
+        usleep(250 * 1000);
+    }
+    return NULL;
+}
+
+static int run_curl_download(const char* part, const char* url, const char* key, uint64_t total) {
+    bool tty = isatty(STDERR_FILENO);
+    const char* progress = tty ? "--progress-bar" : "-sS";
     const char* argv[] = {
         CURL_BIN, "-q", "-fL", "--proto", "=https", "--proto-redir", "=https",
         "--retry", "5", "--retry-delay", "2", "-C", "-", progress, "-o", part, url, NULL
     };
     SoulXCmd cmd = { .argv = argv };
-    return soulx_run_passthrough(&cmd);
+    DownloadWatch w = { .part = part, .key = key, .total = total, .done = false };
+    pthread_t th;
+    bool watching = !tty && pthread_create(&th, NULL, watch_download, &w) == 0;
+    int rc = soulx_run_passthrough(&cmd);
+    if (watching) {
+        w.done = true;
+        pthread_join(th, NULL);
+    }
+    return rc;
 }
 
 static int download_package(const SoulXPackage* p, char* zip_out, size_t cap) {
@@ -1169,10 +1211,10 @@ static int download_package(const SoulXPackage* p, char* zip_out, size_t cap) {
         char size_s[32];
         format_bytes(p->size, size_s, sizeof(size_s));
         soulx_log(SOULX_LOG_INFO, "Downloading %s %s (%s) from %s", p->key, p->version, size_s, p->url);
-        int rc = run_curl_download(part, p->url);
+        int rc = run_curl_download(part, p->url, p->key, p->size);
         if (rc == 33 && !g_soulx_interrupted) {     // server refused to resume: start over once
             unlink(part);
-            rc = run_curl_download(part, p->url);
+            rc = run_curl_download(part, p->url, p->key, p->size);
         }
         if (g_soulx_interrupted) {
             soulx_log(SOULX_LOG_ERROR, "download interrupted; run `soulx setup` again to resume");
