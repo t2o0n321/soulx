@@ -25,7 +25,7 @@ struct ContentView: View {
                             }
                         } icon: {
                             Image(systemName: "sparkles")
-                                .foregroundStyle(model.mcp?.enabled == true ? Color.accentColor : Color.secondary)
+                                .opacity(model.mcp?.enabled == true ? 1 : 0.4)        // the system colours it (white when selected)
                         }
                         .tag(Optional(item))
                     }

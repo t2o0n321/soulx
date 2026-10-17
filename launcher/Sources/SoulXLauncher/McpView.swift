@@ -124,13 +124,15 @@ struct McpView: View {
             Image(systemName: "app.connected.to.app.below.fill").foregroundStyle(.secondary).frame(width: 20)
             VStack(alignment: .leading, spacing: 2) {
                 Text(app.name)
-                Text(stateText(app.state)).font(.caption)
-                    .foregroundStyle(app.state == "connected" ? Color.green : app.state == "unreadable" ? Color.orange : Color.secondary)
+                Text(stateText(app.state)).font(.caption).foregroundStyle(stateColor(app.state))
             }
             Spacer()
             if busyClient == app.id {
                 ProgressView().controlSize(.small)
             } else if app.state == "connected" {
+                if !enabled {
+                    Button(L("Turn on")) { Task { await model.setMcp(["--enable"]) } }.buttonStyle(.borderedProminent)
+                }
                 Button(L("Disconnect")) { run(app, connect: false) }
             } else if app.state == "other" {
                 Button(L("Remove")) { run(app, connect: false) }
@@ -143,10 +145,20 @@ struct McpView: View {
 
     private func stateText(_ s: String) -> String {
         switch s {
-        case "connected": return L("Connected")
+        case "connected": return enabled ? L("Connected") : L("Added, but AI control is off: the app cannot use SoulX")
         case "other": return L("Connected to another copy of SoulX")
         case "unreadable": return L("Its settings file is damaged; SoulX does not touch it")
         default: return L("Not connected")
+        }
+    }
+
+    private var enabled: Bool { model.mcp?.enabled == true }
+
+    private func stateColor(_ s: String) -> Color {
+        switch s {
+        case "connected": return enabled ? .green : .orange
+        case "unreadable": return .orange
+        default: return .secondary
         }
     }
 
