@@ -279,7 +279,7 @@ const char* soulx_conf_profile_name(const SoulXInstanceConf* c) {
         const RegProfile* p = &k_profiles[i];
         int pw = c->landscape ? p->height : p->width;       // apply_profile swaps for landscape
         int ph = c->landscape ? p->width : p->height;
-        if (c->cores == p->cores && c->ram_mb == p->ram_mb && c->data_gb == p->data_gb &&
+        if (c->cores == p->cores && c->ram_mb == p->ram_mb &&      // storage is not part of a profile's identity
             c->width == pw && c->height == ph && c->dpi == p->dpi) {
             return p->name;
         }

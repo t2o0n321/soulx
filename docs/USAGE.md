@@ -107,7 +107,8 @@ Android Studio is never needed or used.
 **`soulx doctor`** checks this Mac (Apple Silicon, Hypervisor, memory, free disk), SoulX's runtime, the adb server and
 your instances. It exits with 1 when something keeps SoulX from running.
 
-**`soulx runtime`** shows which runtime packages are installed, their versions and disk usage.
+**`soulx runtime [--json]`** shows which runtime packages are installed, their versions and disk usage. `--json` also
+says whether the default runtime is ready to run (for launchers).
 
 **`soulx version`** prints the SoulX version and the Android engine it runs.
 

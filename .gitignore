@@ -22,3 +22,7 @@ build/
 secrets/
 .env
 .env.local
+
+# Swift launcher
+launcher/.build/
+launcher/.swiftpm/

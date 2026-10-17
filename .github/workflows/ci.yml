@@ -44,3 +44,17 @@ jobs:
           name: test-logs-${{ matrix.build }}
           path: build/macos/Testing/Temporary/
           if-no-files-found: ignore
+
+  launcher:
+    name: Launcher (SwiftUI) build and tests
+    runs-on: macos-15
+    defaults:
+      run:
+        working-directory: launcher
+    steps:
+      - uses: actions/checkout@v7
+      - run: swift --version
+      - name: Build
+        run: swift build -c release
+      - name: Unit tests
+        run: swift test

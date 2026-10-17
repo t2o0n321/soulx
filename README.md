@@ -71,6 +71,7 @@ script, Run script, Screenshot and Keymap. ⌘W stops the instance, and ⌥⌘W 
 | **[docs/SCRIPTING.md](docs/SCRIPTING.md)** | The Lua automation API, with a tutorial |
 | **[examples/scripts/](examples/scripts/)** | Complete example scripts |
 | **[docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)** | For developers: building from source, tests, project layout, architecture and debugging |
+| **[launcher/](launcher/)** | The SwiftUI launcher (in development): manage instances without the terminal |
 
 ## Acknowledgements
 

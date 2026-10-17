@@ -3025,6 +3025,7 @@ static bool engine_cpu_ns(pid_t pid, uint64_t* ns, uint64_t* footprint) {
 static bool stats_sleep(int ms) {
     for (int left = ms; left > 0; left -= 50) {
         if (soulx_interrupted()) return false;
+        if (getppid() == 1) return false;           // orphaned: the process that started us is gone
         struct timespec ts = { 0, (long)(left < 50 ? left : 50) * 1000000L };
         nanosleep(&ts, NULL);
     }
@@ -3116,7 +3117,7 @@ static int cmd_stats(const CliCommand* self, const CliArgs* a, const CliGlobal* 
         else printf("CPU: 100%% = one core of %d; memory: the engine's footprint\n", ncpu);
         fflush(stdout);
         if (watch && !json) putchar('\n');
-    } while (watch && !soulx_interrupted());
+    } while (watch && !soulx_interrupted() && getppid() != 1);  // ends with its parent (a launcher that quit)
     return CLI_EXIT_OK;
 }
 
@@ -3314,13 +3315,48 @@ static int cmd_doctor(const CliCommand* self, const CliArgs* a, const CliGlobal*
     return soulx_doctor() == 0 ? CLI_EXIT_OK : CLI_EXIT_FAIL;
 }
 
+enum { RUNTIME_JSON };
+static const CliOpt k_runtime_opts[] = {
+    [RUNTIME_JSON] = { "json", 0, false },
+};
+
 static int cmd_runtime(const CliCommand* self, const CliArgs* a, const CliGlobal* g) {
     (void)g;
     int rc = no_positionals(self, a);
     if (rc != 0) {
         return rc;
     }
-    return soulx_runtime_print_status() == 0 ? CLI_EXIT_OK : CLI_EXIT_FAIL;
+    if (!a->val[RUNTIME_JSON]) {
+        return soulx_runtime_print_status() == 0 ? CLI_EXIT_OK : CLI_EXIT_FAIL;
+    }
+    // for launchers: every package, whether it is installed, and whether the default image can run
+    size_t n = 0;
+    const SoulXPackage* pkgs = soulx_runtime_packages(&n);
+    const SoulXPackage* def = soulx_runtime_default_image();
+    printf("{\"home\": ");
+    json_str(stdout, soulx_home());
+    printf(", \"default_image\": ");
+    json_str_or_null(stdout, def ? def->key : NULL);
+    printf(", \"ready\": %s, \"packages\": [", def && soulx_runtime_ready(def->key) ? "true" : "false");
+    for (size_t i = 0; i < n; i++) {
+        const SoulXPackage* p = &pkgs[i];
+        printf("%s{\"key\": ", i ? ", " : "");
+        json_str(stdout, p->key);
+        printf(", \"kind\": \"%s\", \"version\": ", p->kind == SOULX_PKG_ENGINE ? "engine" :
+               p->kind == SOULX_PKG_PLATFORM_TOOLS ? "platform-tools" : "image");
+        json_str(stdout, p->version);
+        printf(", \"download_bytes\": %llu, \"installed\": %s, \"description\": ", (unsigned long long)p->size,
+               soulx_runtime_installed(p) ? "true" : "false");
+        json_str_or_null(stdout, p->description);
+        if (p->kind == SOULX_PKG_IMAGE) {
+            printf(", \"android\": ");
+            json_str_or_null(stdout, p->android_name);
+            printf(", \"playstore\": %s, \"page16k\": %s", p->playstore ? "true" : "false", p->page16k ? "true" : "false");
+        }
+        putchar('}');
+    }
+    printf("]}\n");
+    return CLI_EXIT_OK;
 }
 
 // API level from an image target such as "android-37.0" (0 if unknown)
@@ -3758,11 +3794,13 @@ static const CliCommand k_commands[] = {
       NO_OPTS, CLI_INTERLEAVED, false },
 
     { "runtime", cmd_runtime, GROUP_TOOLS, "runtime", "show the installed runtime packages",
-      "soulx runtime\n"
+      "soulx runtime [--json]\n"
       "\n"
       "Shows which runtime packages (engine, adb, system images) are installed, their versions and\n"
-      "disk usage.\n",
-      NO_OPTS, CLI_INTERLEAVED, false },
+      "disk usage.\n"
+      "\n"
+      "  --json   print JSON instead of text (packages, installed, and whether the default image is ready)\n",
+      k_runtime_opts, NOPTS(k_runtime_opts), CLI_INTERLEAVED, false },
 
     { "version", cmd_version, GROUP_TOOLS, "version", "show the version",
       "soulx version\n"

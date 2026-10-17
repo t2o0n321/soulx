@@ -106,6 +106,7 @@ source/
   third_party/              Lua 5.4, stb_image, stb_image_write
 tests/macos/                unit tests
 examples/scripts/           example Lua scripts
+launcher/                  SwiftUI launcher (Swift package; see launcher/README.md)
 docs/                       USAGE, SCRIPTING and this file
 ```
 
