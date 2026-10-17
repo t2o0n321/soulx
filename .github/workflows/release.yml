@@ -42,7 +42,7 @@ jobs:
         run: swift test
 
       - name: Package
-        run: ./scripts/package_macos.sh --skip-build
+        run: ./scripts/package_macos.sh
 
       - name: Check the app
         run: |
