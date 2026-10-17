@@ -188,3 +188,11 @@ public struct McpClientApp: Decodable, Identifiable, Sendable {
     public let state: String          // "connected", "other", "no", "unreadable"
     public let config: String
 }
+
+/// One installed app from `soulx apps --json`.
+public struct InstalledApp: Decodable, Identifiable, Hashable, Sendable {
+    public let package: String
+    public let label: String?            // the app's name; nil when it could not be read
+    public var id: String { package }
+    public var title: String { label.flatMap { $0.isEmpty ? nil : $0 } ?? package }
+}

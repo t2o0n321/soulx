@@ -201,6 +201,8 @@ NSString* SoulXText(NSString* english) {
             @"Volume": @[ @"音量", @"音量" ],
             @"Output volume": @[ @"輸出音量", @"输出音量" ],
             @"Apps": @[ @"應用", @"应用" ],
+            @"Live": @[ @"已連線", @"已连接" ],
+            @"Connected. Android only draws when something changes, so a still screen shows no frame rate.": @[ @"已連線。Android 只在畫面有變化時才繪製，所以畫面靜止時不顯示幀率。", @"已连接。Android 只在画面有变化时才绘制，所以画面静止时不显示帧率。" ],
             @"Scripts": @[ @"腳本", @"脚本" ],
             @"Capture": @[ @"擷取", @"截取" ],
             @"Script parameters": @[ @"腳本參數", @"脚本参数" ],

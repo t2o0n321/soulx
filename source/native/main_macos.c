@@ -2438,9 +2438,10 @@ static int cmd_uninstall(const CliCommand* self, const CliArgs* a, const CliGlob
     return package_command(self, a, g, PKG_UNINSTALL);
 }
 
-enum { APPS_ALL };
+enum { APPS_ALL, APPS_JSON };
 static const CliOpt k_apps_opts[] = {
-    [APPS_ALL] = { "all", 0, false },
+    [APPS_ALL]  = { "all", 0, false },
+    [APPS_JSON] = { "json", 0, false },
 };
 
 static int cmd_apps(const CliCommand* self, const CliArgs* a, const CliGlobal* g) {
@@ -2485,6 +2486,22 @@ static int cmd_apps(const CliCommand* self, const CliArgs* a, const CliGlobal* g
         line = next;
     }
     qsort(lines, n, sizeof *lines, cmp_cstr);
+    if (a->val[APPS_JSON]) {
+        printf("[");
+        for (size_t i = 0; i < n; i++) {
+            char label[128];
+            bool named = soulx_app_label(t.serial, lines[i], !all, label, sizeof label) == 0;   // --all: only names known
+            printf("%s{\"package\": ", i ? ", " : "");
+            json_str(stdout, lines[i]);
+            printf(", \"label\": ");
+            if (named) json_str(stdout, label); else printf("null");
+            printf("}");
+        }
+        printf("]\n");
+        free(lines);
+        free(out);
+        return CLI_EXIT_OK;
+    }
     for (size_t i = 0; i < n; i++) {
         printf("%s\n", lines[i]);
     }
@@ -4016,11 +4033,12 @@ static const CliCommand k_commands[] = {
       NO_OPTS, CLI_INTERLEAVED, true },
 
     { "apps", cmd_apps, GROUP_APPS, "apps", "list installed apps",
-      "soulx apps [-i NAME] [--all]\n"
+      "soulx apps [-i NAME] [--all] [--json]\n"
       "\n"
       "Lists the package names of the apps you installed.\n"
       "\n"
-      "  --all   include the system apps\n",
+      "  --all    include the system apps\n"
+      "  --json   as JSON: [{\"package\": ..., \"label\": the app's name or null}]\n",
       k_apps_opts, NOPTS(k_apps_opts), CLI_INTERLEAVED, true },
 
     { "stop-app", cmd_stop_app, GROUP_APPS, "stop-app <package>", "force-stop an app",

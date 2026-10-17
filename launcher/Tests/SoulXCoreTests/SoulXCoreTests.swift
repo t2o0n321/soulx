@@ -68,6 +68,14 @@ struct ModelsTests {
 }
 
 struct SettingsTests {
+    // `soulx apps --json`: a name when SoulX could read it, else null (the package is shown instead)
+    @Test func testDecodeApps() throws {
+        let json = #"[{"package": "com.example.game", "label": "\u6e2c\u8a66\u904a\u6232"}, {"package": "com.example.x", "label": null}]"#
+        let apps = try JSONDecoder().decode([InstalledApp].self, from: Data(json.utf8))
+        #expect(apps[0].title == "測試遊戲" && apps[0].package == "com.example.game")
+        #expect(apps[1].label == nil && apps[1].title == "com.example.x")
+    }
+
     // `soulx mcp log --page 3 --per-page 3 --json` (newest first; the last page may be short)
     @Test func testDecodeMcpLogPage() throws {
         let json = """

@@ -356,6 +356,8 @@ typedef struct {
     long long version_code;
     char abis[128];              // comma separated lib/<abi> found in the APK set ("" = no native code)
     bool wants_landscape;        // launcher activity requests a landscape orientation
+    char label[128];             // the app's name (android:label, resolved in the user's language; "" = unknown)
+    uint32_t label_res;          // android:label as a resource id (resolved through resources.arsc)
 } SoulXApkInfo;
 
 int soulx_apk_inspect(const char* path, SoulXApkInfo* info);   // .apk/.xapk/.apks/.apkm/dir; 0 ok
@@ -366,6 +368,9 @@ int soulx_force_stop(const char* serial, const char* package);
 int soulx_uninstall_package(const char* serial, const char* package);
 int soulx_foreground_package(const char* serial, char* package, size_t cap);
 int soulx_list_packages(const char* serial, bool third_party_only, char** out);   // newline separated, malloc'd
+int soulx_app_label(const char* serial, const char* package, bool fetch, char* out, size_t cap);
+                                                       // the app's name in the user's language: cached, else read from its
+                                                       // APK on the instance (fetch); -1 when it has none
 bool soulx_package_name_valid(const char* package);
 
 // ---------------------------------------------------------------------------

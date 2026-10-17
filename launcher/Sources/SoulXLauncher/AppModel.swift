@@ -125,6 +125,26 @@ final class AppModel: ObservableObject {
         return running ? L("Saved. The running instance gets the new settings when it restarts.") : L("Saved.")
     }
 
+    // --- apps (the instance must be running) ---
+
+    func apps(_ name: String) async -> [InstalledApp]? {
+        try? await cli?.json([InstalledApp].self, ["apps", "-i", name, "--json"])
+    }
+
+    /// Installs .apk/.xapk/.apks/.apkm files; true when every one went in.
+    func installApps(_ name: String, _ urls: [URL]) async -> Bool {
+        guard let cli, !urls.isEmpty else { return false }
+        let r = await cli.run(["install", "-i", name] + urls.map(\.path))
+        if !r.ok { alert = r.message }
+        return r.ok
+    }
+
+    func appAction(_ name: String, _ command: String, _ package: String) async {
+        guard let cli else { return }
+        let r = await cli.run([command, "-i", name, package])
+        if !r.ok { alert = r.message }
+    }
+
     // --- scripts (managed here, run from SoulX's window or `soulx run`) ---
 
     func scripts(_ name: String) async -> ScriptList? {

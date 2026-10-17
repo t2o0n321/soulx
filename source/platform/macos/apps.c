@@ -8,6 +8,8 @@
  * and nothing read from it reaches a host shell.
  */
 
+#include <CoreFoundation/CoreFoundation.h>
+#include <ctype.h>
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -38,6 +40,7 @@
 #define OBB_MAX              32                     // OBB files per package
 #define SPLIT_NAME_MAX       128
 #define ZIP_TIMEOUT_MS       (2 * 60 * 1000)
+#define ARSC_MAX_BYTES       (64u * 1024u * 1024u)  // resources.arsc size cap (app names)
 #define EXTRACT_TIMEOUT_MS   (15 * 60 * 1000)
 #define INSTALL_TIMEOUT_MS   (10 * 60 * 1000)
 #define OBB_TIMEOUT_MS       (30 * 60 * 1000)
@@ -66,11 +69,13 @@ int soulx_xapk_json_parse(const char* json, size_t len, char* package, size_t pa
 #define RES_XML_END_ELEMENT      0x0103
 #define RES_XML_RESOURCE_MAP     0x0180
 #define RES_UTF8_FLAG            0x0100u
+#define RES_TYPE_REFERENCE       0x01
 #define RES_TYPE_STRING          0x03
 #define RES_TYPE_FIRST_INT       0x10
 #define RES_TYPE_LAST_INT        0x1f
 #define AXML_NONE                0xFFFFFFFFu
 
+#define ATTR_LABEL               0x01010001u   // android:label
 #define ATTR_NAME                0x01010003u   // android:name
 #define ATTR_SCREEN_ORIENTATION  0x0101001eu   // android:screenOrientation
 #define ATTR_VERSION_CODE        0x0101021bu   // android:versionCode
@@ -698,7 +703,16 @@ static int manifest_visit(const AxmlPool* pool, const AxmlEvent* ev, void* ctx)
         return scan_manifest_attrs(pool, ev, m);
     }
     if (ev->depth == 2) {
-        if (axml_str_eq(pool, ev->name, "application")) m->app_depth = 2;
+        if (axml_str_eq(pool, ev->name, "application")) {
+            m->app_depth = 2;
+            for (uint32_t i = 0; i < ev->attr_count; i++) {         // the app's name
+                AxmlAttr a;
+                axml_attr_at(ev, i, &a);
+                if (!axml_attr_is(pool, &a, ATTR_LABEL, "label")) continue;
+                if (a.type == RES_TYPE_REFERENCE) m->info->label_res = a.data;
+                else if (axml_str_copy(pool, axml_attr_str(&a), m->info->label, sizeof(m->info->label)) < 0) m->info->label[0] = '\0';
+            }
+        }
         return 0;
     }
     if (m->app_depth && ev->depth == m->app_depth + 1) {
@@ -769,6 +783,8 @@ static int axml_parse_manifest(const uint8_t* data, size_t len, SoulXApkInfo* in
     info->package[0] = '\0';
     info->version_name[0] = '\0';
     info->version_code = 0;
+    info->label[0] = '\0';
+    info->label_res = 0;
     info->wants_landscape = false;
     if (split && split_cap) split[0] = '\0';
 
@@ -1973,6 +1989,9 @@ static int apkset_collect_obbs(ApkSet* set, bool want_obb)
     return rc;
 }
 
+static int arsc_resolve(const uint8_t* data, size_t len, uint32_t id, char* out, size_t cap);
+static void label_cache_put(const char* package, const char* label);
+
 // Reads every APK's manifest and listing: base APK, package consistency, splits, ABIs.
 static int apkset_analyze(ApkSet* set, bool want_obb)
 {
@@ -2001,6 +2020,15 @@ static int apkset_analyze(ApkSet* set, bool want_obb)
             bases++;
             set->base = i;
             set->info = inf;
+            if (!set->info.label[0] && set->info.label_res) {              // the name: an @string in resources.arsc
+                uint8_t* arsc = NULL;
+                size_t alen = 0;
+                if (zip_read_entry(set, f->path, "resources.arsc", ARSC_MAX_BYTES, &arsc, &alen) == 0 &&
+                    arsc_resolve(arsc, alen, set->info.label_res, set->info.label, sizeof(set->info.label)) != 0) {
+                    set->info.label[0] = '\0';
+                }
+                free(arsc);
+            }
         } else {
             int abi = split_abi(f->split);
             if (abi >= 0) mask |= 1u << abi;
@@ -2357,6 +2385,7 @@ int soulx_install_path(const char* serial, const char* path, SoulXApkInfo* info_
         soulx_cmd_result_free(&res);
         // the caller reports the result (the CLI prints "Installed ..." itself)
         soulx_log(SOULX_LOG_DEBUG, "installed %s %s", info->package, label);
+        label_cache_put(info->package, info->label);
     }
     // An explicit reinstall of the installed version also refreshes the OBB data (a patched OBB may
     // keep its name and size); otherwise only missing or resized OBB files are copied.
@@ -2611,4 +2640,270 @@ int soulx_list_packages(const char* serial, bool third_party_only, char** out)
     free(raw);
     *out = joined;
     return 0;
+}
+
+// ---------------------------------------------------------------------------
+// App names: android:label resolved through resources.arsc, in the user's language
+// ---------------------------------------------------------------------------
+
+#define ARSC_TABLE      0x0002
+#define ARSC_POOL       0x0001
+#define ARSC_PACKAGE    0x0200
+#define ARSC_TYPE       0x0201
+
+// The language to show names in: "zh" + "TW"/"CN", "en" + "" ... (from soulx language, else the Mac's).
+static void label_locale(char lang[4], char region[4])
+{
+    char tag[32] = "en";
+    const char* chosen = soulx_ui_language();
+    if (strcmp(chosen, "system") != 0) {
+        snprintf(tag, sizeof(tag), "%s", chosen);
+    } else {
+        CFArrayRef prefs = CFLocaleCopyPreferredLanguages();
+        if (prefs && CFArrayGetCount(prefs) > 0) {
+            CFStringRef first = CFArrayGetValueAtIndex(prefs, 0);
+            if (!CFStringGetCString(first, tag, sizeof(tag), kCFStringEncodingUTF8)) snprintf(tag, sizeof(tag), "en");
+        }
+        if (prefs) CFRelease(prefs);
+    }
+    for (char* p = tag; *p; p++) *p = (char)tolower((unsigned char)*p);
+    snprintf(lang, 4, "%.2s", tag);
+    region[0] = '\0';
+    if (!strncmp(tag, "zh", 2)) {
+        bool hant = strstr(tag, "hant") || strstr(tag, "-tw") || strstr(tag, "-hk") || strstr(tag, "-mo");
+        snprintf(region, 4, "%s", hant ? "TW" : "CN");
+        return;
+    }
+    const char* dash = strchr(tag, '-');
+    if (dash && strlen(dash + 1) == 2) {
+        region[0] = (char)toupper((unsigned char)dash[1]);
+        region[1] = (char)toupper((unsigned char)dash[2]);
+        region[2] = '\0';
+    }
+}
+
+static bool zh_hant_region(const char* r) { return !strcmp(r, "TW") || !strcmp(r, "HK") || !strcmp(r, "MO"); }
+
+// How well a resource configuration's locale suits the user: higher is better, -1 = not at all.
+static int locale_score(const uint8_t* cfg, size_t cfg_size, const char* lang, const char* region)
+{
+    if (cfg_size < 12) return 2;                         // no locale: the default
+    char l[3] = { (char)cfg[8], (char)cfg[9], 0 }, r[3] = { (char)cfg[10], (char)cfg[11], 0 };
+    if (!l[0]) return 2;                                 // default value
+    if (cfg[8] & 0x80) return 0;                         // packed three-letter language
+    if (strcmp(l, lang) != 0) return 0;
+    if (r[0] && !strcmp(r, region)) return 5;
+    if (!strcmp(lang, "zh")) {
+        bool want_hant = zh_hant_region(region), is_hant = zh_hant_region(r);
+        return want_hant == is_hant ? 4 : 3;             // zh without a region counts as Simplified
+    }
+    return r[0] ? 3 : 4;
+}
+
+typedef struct {
+    const uint8_t* data;
+    size_t len;
+    AxmlPool pool;                                       // the table's global string pool
+    const char* lang;
+    const char* region;
+} Arsc;
+
+// Finds entry `index` in a type chunk; its value type and data. -1 when this configuration has no such entry.
+static int arsc_entry(const uint8_t* c, size_t size, uint32_t index, uint8_t* type, uint32_t* data)
+{
+    uint16_t header = rd16(c + 2);
+    if (header < 20 || header > size) return -1;
+    uint8_t flags = c[9];
+    uint32_t count = rd32(c + 12), start = rd32(c + 16);
+    if (start > size) return -1;
+    uint32_t off;
+    if (flags & 0x01) {                                  // sparse: (index, offset / 4) pairs
+        if ((uint64_t)header + (uint64_t)count * 4 > size) return -1;
+        bool found = false;
+        off = 0;
+        for (uint32_t i = 0; i < count; i++) {
+            const uint8_t* e = c + header + i * 4;
+            if (rd16(e) == index) { off = (uint32_t)rd16(e + 2) * 4; found = true; break; }
+        }
+        if (!found) return -1;
+    } else if (flags & 0x02) {                           // 16-bit offsets / 4
+        if (index >= count || (uint64_t)header + (uint64_t)count * 2 > size) return -1;
+        uint16_t v = rd16(c + header + index * 2);
+        if (v == 0xFFFF) return -1;
+        off = (uint32_t)v * 4;
+    } else {
+        if (index >= count || (uint64_t)header + (uint64_t)count * 4 > size) return -1;
+        off = rd32(c + header + index * 4);
+        if (off == 0xFFFFFFFFu) return -1;
+    }
+    if ((uint64_t)start + off + 8 > size) return -1;
+    const uint8_t* e = c + start + off;
+    uint16_t eflags = rd16(e + 2);
+    if (eflags & 0x08) {                                 // compact entry: type in the flags' high byte
+        *type = (uint8_t)(eflags >> 8);
+        *data = rd32(e + 4);
+        return 0;
+    }
+    if (eflags & 0x01) return -1;                        // a bag (style, array ...), not a value
+    uint16_t esize = rd16(e);
+    if ((uint64_t)start + off + esize + 8 > size) return -1;
+    *type = e[esize + 3];
+    *data = rd32(e + esize + 4);
+    return 0;
+}
+
+// Resolves a string resource to UTF-8 in the best-suited language; references are followed a few times.
+static int arsc_string(const Arsc* t, uint32_t id, int depth, char* out, size_t cap)
+{
+    if (depth > 4) return -1;
+    uint32_t pkg_id = id >> 24, type_id = (id >> 16) & 0xFF, index = id & 0xFFFF;
+    size_t pos = rd16(t->data + 2);
+    int best = -1;
+    uint8_t best_type = 0;
+    uint32_t best_data = 0;
+    while (pos + 8 <= t->len) {
+        const uint8_t* c = t->data + pos;
+        uint32_t size = rd32(c + 4);
+        if (size < 8 || pos + size > t->len) return -1;
+        if (rd16(c) == ARSC_PACKAGE && size >= 12 && rd32(c + 8) == pkg_id) {
+            size_t sub = rd16(c + 2);
+            while (sub + 8 <= size) {
+                const uint8_t* s = c + sub;
+                uint32_t ssize = rd32(s + 4);
+                if (ssize < 8 || sub + ssize > size) break;
+                if (rd16(s) == ARSC_TYPE && ssize >= 20 && s[8] == type_id) {
+                    uint8_t vt;
+                    uint32_t vd;
+                    uint32_t cfg_size = ssize >= 24 ? rd32(s + 20) : 0;          // ResTable_config starts with its size
+                    if (arsc_entry(s, ssize, index, &vt, &vd) == 0) {
+                        int score = locale_score(s + 20, 20 + (size_t)cfg_size <= ssize ? cfg_size : 0, t->lang, t->region);
+                        if (score > best) { best = score; best_type = vt; best_data = vd; }
+                    }
+                }
+                sub += ssize;
+            }
+        }
+        pos += size;
+    }
+    if (best < 0) return -1;
+    if (best_type == RES_TYPE_STRING) return axml_str_copy(&t->pool, best_data, out, cap) < 0 ? -1 : 0;
+    if (best_type == RES_TYPE_REFERENCE) return arsc_string(t, best_data, depth + 1, out, cap);
+    return -1;
+}
+
+static int arsc_resolve(const uint8_t* data, size_t len, uint32_t id, char* out, size_t cap)
+{
+    char lang[4], region[4];
+    label_locale(lang, region);
+    Arsc t = { .data = data, .len = len, .lang = lang, .region = region };
+    if (len < 12 || rd16(data) != ARSC_TABLE) return -1;
+    size_t pos = rd16(data + 2);
+    if (pos + 8 > len || rd16(data + pos) != ARSC_POOL) return -1;
+    uint32_t psize = rd32(data + pos + 4);
+    if (pos + psize > len || axml_pool_load(&t.pool, data + pos, rd16(data + pos + 2), psize) != 0) return -1;
+    out[0] = '\0';
+    return arsc_string(&t, id, 0, out, cap) == 0 && out[0] ? 0 : -1;
+}
+
+// Names are kept in $SOULX_HOME/cache/app-labels, one "language<TAB>package<TAB>name" per line (the last wins).
+static void label_cache_key(char* key, size_t cap)
+{
+    char lang[4], region[4];
+    label_locale(lang, region);
+    snprintf(key, cap, "%s%s%s", lang, region[0] ? "-" : "", region);
+}
+
+static int label_cache_get(const char* package, char* out, size_t cap)
+{
+    char path[PATH_MAX], key[16];
+    if (soulx_path(path, sizeof(path), "cache/app-labels") != 0) return -1;
+    label_cache_key(key, sizeof(key));
+    char* text = NULL;
+    if (soulx_read_file(path, &text, NULL) != 0 || !text) return -1;
+    int rc = -1;
+    char* save = NULL;
+    for (char* line = strtok_r(text, "\n", &save); line; line = strtok_r(NULL, "\n", &save)) {
+        char* t1 = strchr(line, '\t');
+        char* t2 = t1 ? strchr(t1 + 1, '\t') : NULL;
+        if (!t2) continue;
+        *t1 = *t2 = '\0';
+        if (!strcmp(line, key) && !strcmp(t1 + 1, package)) {
+            snprintf(out, cap, "%s", t2 + 1);
+            rc = 0;
+        }
+    }
+    free(text);
+    return rc;
+}
+
+static void label_cache_put(const char* package, const char* label)
+{
+    if (!package || !label || !label[0] || strchr(label, '\n') || strchr(label, '\t')) return;
+    char dir[PATH_MAX], path[PATH_MAX], key[16];
+    if (soulx_path(dir, sizeof(dir), "cache") != 0 || soulx_path(path, sizeof(path), "cache/app-labels") != 0) return;
+    soulx_mkdirs(dir);
+    label_cache_key(key, sizeof(key));
+    FILE* f = fopen(path, "a");
+    if (!f) return;
+    fprintf(f, "%s\t%s\t%s\n", key, package, label);
+    fclose(f);
+}
+
+// Reads the name out of an APK file on the Mac.
+static int apk_file_label(const char* apk, char* out, size_t cap)
+{
+    const char* mf[] = { k_unzip, "-p", apk, "AndroidManifest.xml", NULL };
+    SoulXCmdResult res;
+    if (run_tool(mf, NULL, AXML_MAX_BYTES + 1, ZIP_TIMEOUT_MS, &res) != 0 || !res.out || res.out_len == 0) {
+        soulx_cmd_result_free(&res);
+        return -1;
+    }
+    SoulXApkInfo info;
+    memset(&info, 0, sizeof(info));
+    int rc = axml_parse_manifest((const uint8_t*)res.out, res.out_len, &info, NULL, 0);
+    soulx_cmd_result_free(&res);
+    if (rc != 0) return -1;
+    if (info.label[0]) { snprintf(out, cap, "%s", info.label); return 0; }
+    if (!info.label_res) return -1;
+    const char* rs[] = { k_unzip, "-p", apk, "resources.arsc", NULL };
+    if (run_tool(rs, NULL, ARSC_MAX_BYTES + 1, ZIP_TIMEOUT_MS, &res) != 0 || !res.out) {
+        soulx_cmd_result_free(&res);
+        return -1;
+    }
+    rc = arsc_resolve((const uint8_t*)res.out, res.out_len, info.label_res, out, cap);
+    soulx_cmd_result_free(&res);
+    return rc;
+}
+
+int soulx_app_label(const char* serial, const char* package, bool fetch, char* out, size_t cap)
+{
+    if (!out || cap == 0) return -1;
+    out[0] = '\0';
+    if (!package || !soulx_package_name_valid(package)) return -1;
+    if (label_cache_get(package, out, cap) == 0) return 0;
+    if (!fetch || !serial_valid(serial)) return -1;
+    // not installed through SoulX (or before it kept names): copy the base APK off the instance once
+    char cmd[512], *where = NULL;
+    snprintf(cmd, sizeof(cmd), "pm path %s", package);
+    if (soulx_adb_shell(serial, cmd, &where, SHELL_TIMEOUT_MS) != 0 || !where) { free(where); return -1; }
+    char remote[PATH_MAX] = "";
+    for (char* line = strtok(where, "\r\n"); line; line = strtok(NULL, "\r\n")) {
+        if (strncmp(line, "package:", 8) != 0) continue;
+        if (!remote[0] || strstr(line, "/base.apk")) snprintf(remote, sizeof(remote), "%s", line + 8);   // base.apk, else the first
+        if (strstr(line, "/base.apk")) break;
+    }
+    free(where);
+    if (!remote[0]) return -1;
+    char dir[PATH_MAX], local[PATH_MAX];
+    if (soulx_path(dir, sizeof(dir), "tmp") != 0) return -1;
+    soulx_mkdirs(dir);
+    snprintf(local, sizeof(local), "%s/label-%d.apk", dir, (int)getpid());
+    const char* pull[] = { "pull", remote, local, NULL };
+    SoulXCmdResult res;
+    int rc = soulx_adb(serial, pull, &res, 120000);
+    soulx_cmd_result_free(&res);
+    if (rc == 0) rc = apk_file_label(local, out, cap);
+    unlink(local);
+    if (rc == 0) label_cache_put(package, out);
+    return rc;
 }

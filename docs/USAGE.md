@@ -207,7 +207,10 @@ files, a folder of split APKs, or the package name of an installed app.
 
 **`soulx uninstall [-i NAME] <package>`** removes an app and its data.
 
-**`soulx apps [-i NAME] [--all]`** lists the package names of the apps you installed. `--all` includes the system apps.
+**`soulx apps [-i NAME] [--all] [--json]`** lists the package names of the apps you installed. `--all` includes the
+system apps. `--json` adds each app's name in your language (`label`, or null when it cannot be read): SoulX reads it
+from the APK when it installs it, and once from the instance for apps installed otherwise, then keeps it in
+`cache/app-labels`. With `--all`, only names already known are given.
 
 **`soulx launch [-i NAME] <package>`** starts an installed app.
 

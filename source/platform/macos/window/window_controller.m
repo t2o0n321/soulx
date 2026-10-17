@@ -1093,7 +1093,17 @@ static NSString* decode_chunk(NSMutableData* pending) {
 
 - (void)screenView:(SoulXScreenView*)view fps:(double)fps {
     (void)view;
-    _fpsLabel.stringValue = [NSString stringWithFormat:@"%.0f fps", fps];
+    // Android sends a frame only when the screen changes: a still screen is 0 fps and looked frozen. Show that the
+    // connection is live, and the frame rate only while the picture moves.
+    NSFont* font = _fpsLabel.font;
+    NSMutableAttributedString* s = [[NSMutableAttributedString alloc] initWithString:@"● "
+        attributes:@{ NSForegroundColorAttributeName: NSColor.systemGreenColor, NSFontAttributeName: font }];
+    NSString* rest = fps >= 1 ? [NSString stringWithFormat:@"%@ · %.0f fps", SoulXText(@"Live"), fps] : SoulXText(@"Live");
+    NSColor* color = _fpsLabel.textColor ? _fpsLabel.textColor : NSColor.secondaryLabelColor;
+    [s appendAttributedString:[[NSAttributedString alloc] initWithString:rest
+        attributes:@{ NSForegroundColorAttributeName: color, NSFontAttributeName: font }]];
+    _fpsLabel.attributedStringValue = s;
+    _fpsLabel.toolTip = SoulXText(@"Connected. Android only draws when something changes, so a still screen shows no frame rate.");
 }
 
 - (void)screenView:(SoulXScreenView*)view message:(NSString*)text {
