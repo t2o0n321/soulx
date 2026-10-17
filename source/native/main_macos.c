@@ -3422,6 +3422,165 @@ static int cmd_scripts(const CliCommand* self, const CliArgs* a, const CliGlobal
     return rc;
 }
 
+enum { MCP_ENABLE, MCP_DISABLE, MCP_INSTANCES, MCP_ALLOW, MCP_DENY, MCP_JSON, MCP_LINES };
+static const CliOpt k_mcp_opts[] = {
+    [MCP_ENABLE]    = { "enable",    0, false },
+    [MCP_DISABLE]   = { "disable",   0, false },
+    [MCP_INSTANCES] = { "instances", 0, true  },
+    [MCP_ALLOW]     = { "allow",     0, true  },
+    [MCP_DENY]      = { "deny",      0, true  },
+    [MCP_JSON]      = { "json",      0, false },
+    [MCP_LINES]     = { "lines",     'n', true },
+};
+
+static bool* mcp_perm(SoulXMcpConfig* c, const char* name) {
+    if (!strcmp(name, "start-stop")) return &c->allow_start_stop;
+    if (!strcmp(name, "install")) return &c->allow_install;
+    if (!strcmp(name, "scripts")) return &c->allow_scripts;
+    if (!strcmp(name, "lua")) return &c->allow_lua;
+    return NULL;
+}
+
+static void self_path(char* out, size_t cap) {
+    char buf[PROC_PIDPATHINFO_MAXSIZE];
+    if (proc_pidpath(getpid(), buf, sizeof buf) > 0) copy_str(out, cap, buf);
+    else copy_str(out, cap, "soulx");
+}
+
+static int cmd_mcp(const CliCommand* self, const CliArgs* a, const CliGlobal* g) {
+    (void)g;
+    const char* sub = a->npos ? a->pos[0] : "serve";
+    char exe[PATH_MAX];
+    self_path(exe, sizeof exe);
+    if (!strcmp(sub, "serve")) {
+        if (a->npos > 1) return usage_error(self, "serve takes no arguments");
+        if (soulx_ensure_layout() != 0) return CLI_EXIT_FAIL;
+        SoulXMcpConfig c;
+        soulx_mcp_config_load(&c);
+        if (!c.enabled) {
+            // keep serving: the client gets a clear answer on every call, and switching it on needs no restart
+            soulx_log(SOULX_LOG_WARN, "AI control is turned off: tools answer with an error until it is enabled "
+                     "(launcher > AI control, or: soulx mcp config --enable)");
+        }
+        return soulx_mcp_serve(exe) == 0 ? CLI_EXIT_OK : CLI_EXIT_FAIL;
+    }
+    if (!strcmp(sub, "config")) {
+        if (a->npos > 1) return usage_error(self, "config takes options only");
+        if (a->val[MCP_ENABLE] && a->val[MCP_DISABLE]) return usage_error(self, "--enable and --disable together");
+        SoulXMcpConfig c;
+        soulx_mcp_config_load(&c);
+        bool changed = false;
+        if (a->val[MCP_ENABLE]) { c.enabled = true; changed = true; }
+        if (a->val[MCP_DISABLE]) { c.enabled = false; changed = true; }
+        const char* v;
+        if ((v = a->val[MCP_INSTANCES])) {
+            if (strcmp(v, "*") != 0) {
+                char copy[512];
+                if (!copy_str(copy, sizeof copy, v)) return usage_error(self, "--instances is too long");
+                char* save = NULL;
+                for (char* n = strtok_r(copy, ",", &save); n; n = strtok_r(NULL, ",", &save)) {
+                    while (*n == ' ') n++;
+                    if (!soulx_name_valid(n)) return usage_error(self, "'%s' is not an instance name", n);
+                }
+            }
+            copy_str(c.instances, sizeof c.instances, v);
+            changed = true;
+        }
+        for (int k = 0; k < 2; k++) {
+            const char* list = a->val[k == 0 ? MCP_ALLOW : MCP_DENY];
+            if (!list) continue;
+            char copy[256];
+            copy_str(copy, sizeof copy, list);
+            char* save = NULL;
+            for (char* n = strtok_r(copy, ",", &save); n; n = strtok_r(NULL, ",", &save)) {
+                bool* p = mcp_perm(&c, n);
+                if (!p) return usage_error(self, "unknown permission '%s' (start-stop, install, scripts, lua)", n);
+                *p = k == 0;
+                changed = true;
+            }
+        }
+        if (changed && soulx_mcp_config_save(&c) != 0) {
+            soulx_log(SOULX_LOG_ERROR, "could not save %s/mcp.conf", soulx_home());
+            return CLI_EXIT_FAIL;
+        }
+        if (changed) soulx_mcp_audit("config", NULL, c.enabled ? "settings changed (on)" : "settings changed (off)", true);
+        if (a->val[MCP_JSON]) {
+            printf("{\"enabled\": %s, \"instances\": ", c.enabled ? "true" : "false");
+            json_str(stdout, c.instances);
+            printf(", \"allow_start_stop\": %s, \"allow_install\": %s, \"allow_scripts\": %s, \"allow_lua\": %s, "
+                   "\"command\": ", c.allow_start_stop ? "true" : "false", c.allow_install ? "true" : "false",
+                   c.allow_scripts ? "true" : "false", c.allow_lua ? "true" : "false");
+            json_str(stdout, exe);
+            printf("}\n");
+        } else {
+            printf("AI control (MCP): %s\n", c.enabled ? "on" : "off");
+            printf("  instances      %s\n", c.instances);
+            printf("  start-stop     %s\n", c.allow_start_stop ? "allowed" : "not allowed");
+            printf("  install        %s\n", c.allow_install ? "allowed" : "not allowed");
+            printf("  scripts        %s\n", c.allow_scripts ? "allowed" : "not allowed");
+            printf("  lua            %s (always sandboxed)\n", c.allow_lua ? "allowed" : "not allowed");
+        }
+        return CLI_EXIT_OK;
+    }
+    if (!strcmp(sub, "log")) {
+        int lines = 50;
+        const char* v = a->val[MCP_LINES];
+        if (v && !parse_int(v, 1, 10000, &lines)) return range_error(self, "--lines", v, 1, 10000, "");
+        char path[PATH_MAX];
+        char* data = NULL;
+        size_t len = 0;
+        if (soulx_path(path, sizeof path, "logs/mcp.log") != 0 || soulx_read_file(path, &data, &len) != 0) {
+            if (a->val[MCP_JSON]) printf("[]\n"); else printf("(no AI control activity yet)\n");
+            return CLI_EXIT_OK;
+        }
+        // the last N lines
+        const char* start = data + len;
+        for (int seen = 0; start > data; ) {
+            if (start[-1] == '\n' && start != data + len && ++seen > lines) break;
+            start--;
+        }
+        if (!a->val[MCP_JSON]) {
+            fputs(start, stdout);
+        } else {
+            printf("[");
+            bool first = true;
+            char* save = NULL;
+            for (char* line = strtok_r((char*)start, "\n", &save); line; line = strtok_r(NULL, "\n", &save)) {
+                char* f[5] = { 0 };
+                int k = 0;
+                char* tsave = NULL;
+                for (char* t = strtok_r(line, "\t", &tsave); t && k < 5; t = strtok_r(NULL, "\t", &tsave)) f[k++] = t;
+                if (k < 4) continue;
+                printf("%s{\"time\": ", first ? "" : ", ");
+                json_str(stdout, f[0]);
+                printf(", \"ok\": %s, \"tool\": ", !strcmp(f[1], "ok") ? "true" : "false");
+                json_str(stdout, f[2]);
+                printf(", \"instance\": ");
+                json_str(stdout, f[3]);
+                printf(", \"detail\": ");
+                json_str(stdout, f[4] ? f[4] : "");
+                printf("}");
+                first = false;
+            }
+            printf("]\n");
+        }
+        free(data);
+        return CLI_EXIT_OK;
+    }
+    if (!strcmp(sub, "setup")) {
+        printf("Connect an AI client to SoulX (it starts `%s mcp` and talks to it over stdin/stdout;\n"
+               "no network port is opened):\n\n", exe);
+        printf("  In the AI app, add an MCP server (stdio):\n    command:   %s\n    arguments: mcp\n\n", exe);
+        printf("  As JSON (most apps):\n    \"mcpServers\": { \"soulx\": { \"command\": \"%s\", \"args\": [\"mcp\"] } }\n\n", exe);
+        SoulXMcpConfig c;
+        soulx_mcp_config_load(&c);
+        printf("AI control is %s. %s\n", c.enabled ? "on" : "off",
+               c.enabled ? "" : "Turn it on in the launcher (AI control) or: soulx mcp config --enable");
+        return CLI_EXIT_OK;
+    }
+    return usage_error(self, "unknown action '%s' (use serve, config, log or setup)", sub);
+}
+
 enum { LANGUAGE_JSON };
 static const CliOpt k_language_opts[] = {
     [LANGUAGE_JSON] = { "json", 0, false },
@@ -3947,6 +4106,26 @@ static const CliCommand k_commands[] = {
       "\n"
       "Examples: soulx scripts -i farm import ~/Downloads/daily.lua   soulx scripts rename daily.lua Daily run\n",
       k_scripts_opts, NOPTS(k_scripts_opts), CLI_INTERLEAVED, true },
+
+    { "mcp", cmd_mcp, GROUP_TOOLS, "mcp [action]", "AI control: the MCP server and its settings",
+      "soulx mcp [serve|config|log|setup] [options]\n"
+      "\n"
+      "Lets an AI app (any MCP client) see and operate your instances through the\n"
+      "Model Context Protocol. Off by default; the launcher (AI control) or 'mcp config' turns it on.\n"
+      "The server talks only over stdin/stdout of the process the client starts: no network port.\n"
+      "\n"
+      "  serve (default)        run the server (the AI client starts this)\n"
+      "  config                 show or change the settings:\n"
+      "    --enable | --disable   turn AI control on or off (takes effect at once)\n"
+      "    --instances LIST       the instances it may use: \"*\" or names separated by commas\n"
+      "    --allow P,... --deny P,...   permissions: start-stop, install, scripts (your scripts),\n"
+      "                           lua (code the AI writes; always sandboxed, no access to your files)\n"
+      "    --json                 print the settings as JSON\n"
+      "  log [-n N] [--json]    the last N tool calls (all of them are logged)\n"
+      "  setup                  how to connect an AI app\n"
+      "\n"
+      "Never available to the AI: creating, deleting or changing instances, and setup.\n",
+      k_mcp_opts, NOPTS(k_mcp_opts), CLI_INTERLEAVED, false },
 
     { "language", cmd_language, GROUP_TOOLS, "language [lang]", "show or set the language of the window and launcher",
       "soulx language [system|en|zh-hant|zh-hans] [--json]\n"

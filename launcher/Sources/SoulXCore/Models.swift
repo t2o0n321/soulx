@@ -140,3 +140,32 @@ public struct ScriptList: Decodable, Sendable {
     public let folder: String
     public let scripts: [Script]
 }
+
+/// `soulx mcp config --json`: AI control (MCP) settings.
+public struct McpConfig: Decodable, Equatable, Sendable {
+    public let enabled: Bool
+    public let instances: String            // "*" or "a,b"
+    public let allowStartStop: Bool
+    public let allowInstall: Bool
+    public let allowScripts: Bool
+    public let allowLua: Bool
+    public let command: String              // the soulx executable an AI client should start
+    enum CodingKeys: String, CodingKey {
+        case enabled, instances, allowStartStop = "allow_start_stop", allowInstall = "allow_install",
+             allowScripts = "allow_scripts", allowLua = "allow_lua", command
+    }
+    public var allInstances: Bool { instances.trimmingCharacters(in: .whitespaces) == "*" }
+    public var instanceList: [String] {
+        allInstances ? [] : instances.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+    }
+}
+
+/// One line of `soulx mcp log --json`.
+public struct McpLogEntry: Decodable, Identifiable, Sendable {
+    public var id: String { time + tool + instance + detail }
+    public let time: String
+    public let ok: Bool
+    public let tool: String
+    public let instance: String
+    public let detail: String
+}

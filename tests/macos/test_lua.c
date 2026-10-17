@@ -1500,6 +1500,44 @@ static void test_ocr(void) {
 }
 
 // Multi-scale matching: the `scale` option resizes the template, and find_scaled picks the best scale.
+// Sandbox for AI code (soulx mcp run_lua): no host access beyond the scripts folder, device operations still work.
+static void test_sandbox(void) {
+    char box[PATH_MAX], link[PATH_MAX], outside[PATH_MAX];
+    snprintf(box, sizeof(box), "%s/box", g_dir);
+    snprintf(link, sizeof(link), "%s/box/escape", g_dir);
+    snprintf(outside, sizeof(outside), "%s/outside.png", g_dir);
+    mkdir(box, 0755);
+    unlink(link);
+    CHECK(symlink(g_dir, link) == 0, "symlink");
+    setenv("SOULX_LUA_SANDBOX_DIR", box, 1);
+
+    run(&g_run, "sb_globals.lua",
+        "assert(io == nil and load == nil and dofile == nil and loadfile == nil)\n"
+        "assert(require == nil and package == nil and console == nil and soulx.console == nil)\n"
+        "assert(os.getenv == nil and os.remove == nil and os.rename == nil and os.tmpname == nil)\n"
+        "assert(os.execute == nil and type(os.time) == 'function' and type(os.clock) == 'function')\n"
+        "tap(10, 20)\n"
+        "assert(screen_size() > 0)\n"
+        "screenshot('inside.png')\n");
+    expect_ok(&g_run, "sandbox: device operations and a file inside the folder");
+    char inside[PATH_MAX];
+    snprintf(inside, sizeof(inside), "%s/inside.png", box);
+    CHECK(access(inside, F_OK) == 0, "sandbox: relative paths start in the scripts folder");
+
+    expect_error("sandbox: absolute path outside", "screenshot('/private/tmp/soulx-sandbox-x.png')\n", "sandbox");
+    expect_error("sandbox: ..", "screenshot('../outside.png')\n", "sandbox");
+    expect_error("sandbox: symlink out", "screenshot('escape/outside.png')\n", "sandbox");
+    expect_error("sandbox: template outside", "find('/etc/hosts')\n", "sandbox");
+    expect_error("sandbox: io", "io.open('/etc/hosts')\n", "io");
+    CHECK(access(outside, F_OK) != 0 && access("/private/tmp/soulx-sandbox-x.png", F_OK) != 0,
+          "sandbox: nothing was written outside");
+
+    unsetenv("SOULX_LUA_SANDBOX_DIR");
+    run(&g_run, "sb_off.lua", "assert(io ~= nil and require ~= nil and load ~= nil)\n");
+    expect_ok(&g_run, "no sandbox: the user's own scripts keep io and require");
+    unlink(link);
+}
+
 static void test_scale_matching(void) {
     fake_reset();
     scene_set(SCENE_ROUNDS);
@@ -1558,6 +1596,7 @@ int main(void) {
     test_parameter_panel();
     test_ocr();
     test_scale_matching();
+    test_sandbox();
     test_examples();
 
     soulx_lua_set_device_ops(NULL, 0);

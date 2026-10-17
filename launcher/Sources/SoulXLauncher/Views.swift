@@ -14,6 +14,17 @@ struct ContentView: View {
                             .tag(Optional(inst.name))
                     }
                 }
+                Section(L("AI")) {
+                    ForEach([mcpSelection], id: \.self) { item in
+                        HStack {
+                            Label(L("AI control"), systemImage: "sparkles")
+                            Spacer()
+                            Text(model.mcp?.enabled == true ? L("On") : L("Off"))
+                                .font(.caption).foregroundStyle(model.mcp?.enabled == true ? .green : .secondary)
+                        }
+                        .tag(Optional(item))
+                    }
+                }
                 if let host = model.host {
                     Section(L("Mac")) {
                         Text("\(host.cpus) \(L("cores")) · \(host.memoryMB / 1024) GB").foregroundStyle(.secondary)
@@ -46,12 +57,14 @@ struct ContentView: View {
         .alert(L("Error"), isPresented: Binding(get: { model.alert != nil }, set: { if !$0 { model.alert = nil } })) {
             Button(L("OK")) { model.alert = nil }
         } message: { Text(model.alert ?? "") }
-        .task { await model.loadLanguage(); model.startPolling() }
+        .task { await model.loadLanguage(); await model.loadMcp(); model.startPolling() }
         .id(model.language)                         // redraw every text in the new language
     }
 
     @ViewBuilder private var detail: some View {
-        if model.cli == nil {
+        if model.cli != nil, model.selection == mcpSelection {
+            McpView()
+        } else if model.cli == nil {
             ContentUnavailableView(L("Error"), systemImage: "exclamationmark.triangle",
                 description: Text(L("The soulx command was not found. Build it (scripts/build_macos.sh) or set SOULX_CLI.")))
         } else if let rt = model.runtime, !rt.ready {

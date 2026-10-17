@@ -73,6 +73,25 @@ const char* soulx_ui_language(void);                  // "system" | "en" | "zh-h
 int  soulx_set_ui_language(const char* lang);          // saves it in /ui_language; -1 if unknown
 const char* soulx_lang_canonical(const char* s);       // "zh-TW" -> "zh-hant" ...; NULL if unknown
 
+// mcp.c - the MCP server (`soulx mcp`) and its settings (/mcp.conf)
+typedef struct {
+    bool enabled;                // off by default
+    char instances[512];         // "*" or "name,name"
+    bool allow_start_stop;
+    bool allow_install;
+    bool allow_scripts;          // the user's own scripts
+    bool allow_lua;              // Lua the AI writes (always sandboxed)
+} SoulXMcpConfig;
+void soulx_mcp_config_defaults(SoulXMcpConfig* c);
+int  soulx_mcp_config_load(SoulXMcpConfig* c);          // missing file: defaults (off)
+int  soulx_mcp_config_save(const SoulXMcpConfig* c);
+bool soulx_mcp_instance_allowed(const SoulXMcpConfig* c, const char* name);
+void soulx_mcp_audit(const char* tool, const char* instance, const char* detail, bool ok);
+int  soulx_mcp_serve(const char* self_exe);              // JSON-RPC on stdin/stdout until EOF
+void soulx_mcp_set_self(const char* self_exe);           // tests: the soulx the tools run
+void soulx_mcp_call_tool(const char* name, const char* args_json, char** result_json, bool* is_error);
+const char* soulx_mcp_tool_names(int i);                 // NULL past the end
+
 // scripts.c - each instance's Lua scripts (~/Documents/SoulX Scripts/<instance>/, root overridable by $SOULX_SCRIPTS)
 typedef struct {
     char file[512];              // relative to the instance's folder: "farm.lua" or "pkg/main.lua"

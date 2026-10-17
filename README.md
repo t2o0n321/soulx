@@ -35,6 +35,8 @@ soulx run farm.lua                 # let a Lua script play
   can run with or without a window.
 - **Built for long sessions.** A frame rate cap (30 fps uses about 30% less engine CPU), per-instance sound
   control, and `soulx stats` for each instance's CPU and memory use.
+- **AI control (MCP), off by default.** Let an AI app (any MCP client) look at the screen and play, with per-instance
+  and per-action permissions, sandboxed Lua and an audit log. Local only: no network port.
 - **Installs games in any common format:** `.apk`, `.xapk` (with OBB data), `.apks`, `.apkm` and folders of split APKs.
 
 ## Requirements

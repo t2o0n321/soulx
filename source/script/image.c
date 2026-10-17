@@ -357,6 +357,40 @@ int soulx_image_save_png(const char* path, const SoulXImage* img) {
     return rc;
 }
 
+typedef struct { unsigned char* buf; size_t len, cap; bool failed; } MemSink;
+
+static void mem_sink(void* ctx, void* data, int size) {
+    MemSink* s = ctx;
+    if (s->failed || size <= 0) return;
+    if (s->len + (size_t)size > s->cap) {
+        size_t cap = s->cap ? s->cap * 2 : 65536;
+        while (cap < s->len + (size_t)size) cap *= 2;
+        unsigned char* nb = realloc(s->buf, cap);
+        if (!nb) { s->failed = true; return; }
+        s->buf = nb;
+        s->cap = cap;
+    }
+    memcpy(s->buf + s->len, data, (size_t)size);
+    s->len += (size_t)size;
+}
+
+int soulx_image_encode(const SoulXImage* img, bool jpeg, int quality, unsigned char** out, size_t* len) {
+    if (!out || !len) return img_fail("no output buffer");
+    *out = NULL;
+    *len = 0;
+    if (!image_valid(img)) return img_fail("invalid image");
+    MemSink s = { 0 };
+    int ok = jpeg ? stbi_write_jpg_to_func(mem_sink, &s, img->w, img->h, 4, img->rgba, quality < 1 ? 80 : quality > 100 ? 100 : quality)
+                  : stbi_write_png_to_func(mem_sink, &s, img->w, img->h, 4, img->rgba, img->w * 4);
+    if (!ok || s.failed || s.len == 0) {
+        free(s.buf);
+        return img_fail("cannot encode the image (out of memory)");
+    }
+    *out = s.buf;
+    *len = s.len;
+    return 0;
+}
+
 // ---------------------------------------------------------------------------
 // Matching: levels
 // ---------------------------------------------------------------------------

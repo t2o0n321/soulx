@@ -70,7 +70,9 @@ fakes stand in for the engine, adb and the console.
 | `test_image` | PNG I/O and template matching |
 | `test_keymap` | keymap files |
 | `test_apps` | `.apk` / `.xapk` / `.apks` / `.apkm` handling |
-| `test_lua` | the Lua API |
+| `test_lua` | the Lua API, including the sandbox for AI code |
+| `test_scripts` | per-instance scripts, migration, the language setting |
+| `test_mcp` | MCP settings, permissions, the off switch, the audit log |
 
 Run one test with `ctest -R registry --output-on-failure` in `build/macos`.
 
@@ -95,6 +97,8 @@ source/
     apps.c                  installing apps (split APKs, XAPK with OBB)
     device_api.c            the public API on top of the modules
     ocr_vision.m            on-device OCR with Apple's Vision framework
+    scripts.c               each instance's scripts (~/Documents/SoulX Scripts/<instance>/)
+    mcp.c                   the MCP server (`soulx mcp`), its settings and audit log
     window/                 SoulX's window (AppKit + Metal)
       app.m                 app delegate and menus
       window_controller.m   window, toolbar, status bar

@@ -58,7 +58,9 @@ final class AppModel: ObservableObject {
         guard let cli else { return }
         if let list = try? await cli.json([Instance].self, ["list", "--json"]) {
             instances = list
-            if selection == nil || !list.contains(where: { $0.name == selection }) { selection = list.first?.name }
+            if selection != mcpSelection, selection == nil || !list.contains(where: { $0.name == selection }) {
+                selection = list.first?.name
+            }
         }
         if runtime == nil || runtime?.ready == false {
             runtime = try? await cli.json(RuntimeInfo.self, ["runtime", "--json"])
@@ -145,6 +147,25 @@ final class AppModel: ObservableObject {
         guard let cli else { return nil }
         do { return try await cli.json(ScriptList.self, ["scripts", "-i", name, "rename", file, title, "--json"]) }
         catch { alert = error.localizedDescription; return nil }
+    }
+
+    // --- AI control (MCP) ---
+
+    @Published var mcp: McpConfig?
+
+    func loadMcp() async {
+        mcp = try? await cli?.json(McpConfig.self, ["mcp", "config", "--json"])
+    }
+
+    /// Changes AI control settings (`soulx mcp config ...`); the running servers follow on their next tool call.
+    func setMcp(_ args: [String]) async {
+        guard let cli else { return }
+        do { mcp = try await cli.json(McpConfig.self, ["mcp", "config"] + args + ["--json"]) }
+        catch { alert = error.localizedDescription }
+    }
+
+    func mcpLog() async -> [McpLogEntry] {
+        (try? await cli?.json([McpLogEntry].self, ["mcp", "log", "-n", "50", "--json"])) ?? []
     }
 
     func volume(_ name: String) async -> VolumeInfo? {

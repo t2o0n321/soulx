@@ -600,10 +600,48 @@ static const char* package_arg(lua_State* L, int idx) {
     return p;
 }
 
+// Sandbox (code an AI sent through `soulx mcp`):  names the only folder whose files the
+// script may read or write (the instance's scripts folder); relative paths start there. Set only by the MCP server.
+static const char* sandbox_dir(void) {
+    const char* d = getenv("SOULX_LUA_SANDBOX_DIR");
+    return (d && d[0] == '/') ? d : NULL;
+}
+
+static void sandbox_check(lua_State* L, int idx, const char* path) {
+    const char* box = sandbox_dir();
+    if (!box) return;
+    char rbox[PATH_MAX], rp[PATH_MAX];
+    if (!realpath(box, rbox)) luaL_argerror(L, idx, "sandbox: the scripts folder does not exist");
+    if (!realpath(path, rp)) {                       // a file to be written: check its folder
+        char parent[PATH_MAX];
+        snprintf(parent, sizeof(parent), "%s", path);
+        char* slash = strrchr(parent, '/');
+        if (!slash) luaL_argerror(L, idx, "sandbox: path outside the scripts folder");
+        *slash = '\0';
+        char rparent[PATH_MAX];
+        if (!realpath(parent[0] ? parent : "/", rparent)) luaL_argerror(L, idx, "sandbox: path outside the scripts folder");
+        snprintf(rp, sizeof(rp), "%s/%s", rparent, slash + 1);
+        if (strchr(slash + 1, '/') || !strcmp(slash + 1, "..") || !strcmp(slash + 1, ".")) {
+            luaL_argerror(L, idx, "sandbox: path outside the scripts folder");
+        }
+    }
+    size_t bl = strlen(rbox);
+    if (strncmp(rp, rbox, bl) != 0 || (rp[bl] != '/' && rp[bl] != '\0')) {
+        luaL_argerror(L, idx, "sandbox: only files in the instance's scripts folder can be used");
+    }
+}
+
 // A file path: absolute, or relative to the script's folder.
 static void path_arg(lua_State* L, ScriptCtx* ctx, int idx, char* out, size_t cap, const char* what) {
     const char* p = text_arg(L, idx, PATH_MAX - 1, what);
     int n;
+    const char* box = sandbox_dir();
+    if (box && p[0] != '/') {
+        n = snprintf(out, cap, "%s/%s", box, p);
+        if (n < 0 || (size_t)n >= cap) luaL_argerror(L, idx, "path too long");
+        sandbox_check(L, idx, out);
+        return;
+    }
     if (p[0] == '/') {
         n = snprintf(out, cap, "%s", p);
     } else if (strcmp(ctx->dir, "/") == 0) {
@@ -612,6 +650,7 @@ static void path_arg(lua_State* L, ScriptCtx* ctx, int idx, char* out, size_t ca
         n = snprintf(out, cap, "%s/%s", ctx->dir, p);
     }
     if (n < 0 || (size_t)n >= cap) luaL_argerror(L, idx, "path too long");
+    sandbox_check(L, idx, out);
 }
 
 // mkdir -p of the folder that will hold path.
@@ -2109,6 +2148,35 @@ static void api_register(lua_State* L, ScriptCtx* ctx) {
         lua_pushfstring(L, "%s/?.lua;%s/?/init.lua;%s", ctx->dir, ctx->dir, old ? old : "");
         lua_setfield(L, -3, "path");
         lua_pop(L, 2);
+    }
+
+    // Sandbox (AI code from `soulx mcp`): nothing that reaches the Mac beyond the scripts folder (path_arg) - no
+    // io, no os file/env/process functions, no loading of other code (load could take binary chunks), no
+    // emulator console (it can write files on the Mac). Taps, swipes, keys, text, screen and shell() (inside
+    // Android) stay.
+    if (sandbox_dir()) {
+        static const char* const k_removed[] = { "io", "dofile", "loadfile", "load", "require", "package", NULL };
+        for (int i = 0; k_removed[i]; i++) {
+            lua_pushnil(L);
+            lua_setglobal(L, k_removed[i]);
+        }
+        lua_getglobal(L, "os");
+        lua_newtable(L);                                // keep only the clock functions
+        static const char* const k_kept[] = { "clock", "time", "date", "difftime", "exit", NULL };
+        for (int i = 0; k_kept[i]; i++) {
+            lua_getfield(L, -2, k_kept[i]);
+            lua_setfield(L, -2, k_kept[i]);
+        }
+        lua_setglobal(L, "os");
+        lua_pop(L, 1);
+        lua_pushnil(L);
+        lua_setglobal(L, "console");
+        lua_getglobal(L, "soulx");
+        if (lua_istable(L, -1)) {
+            lua_pushnil(L);
+            lua_setfield(L, -2, "console");
+        }
+        lua_pop(L, 1);
     }
 }
 

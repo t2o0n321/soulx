@@ -14,6 +14,7 @@ SoulX from source see [DEVELOPMENT.md](DEVELOPMENT.md).
 - [The SoulX window](#the-soulx-window)
 - [Game keymaps](#game-keymaps)
 - [Automation (Lua)](#automation-lua)
+- [AI control (MCP)](#ai-control-mcp)
 - [Where SoulX keeps its data](#where-soulx-keeps-its-data)
 - [Performance](#performance)
 - [Troubleshooting](#troubleshooting)
@@ -545,6 +546,67 @@ first time SoulX runs. `SOULX_SCRIPTS` sets another root folder.
 
 See [SCRIPTING.md](SCRIPTING.md) for the full API and a tutorial, and [examples/scripts/](../examples/scripts/) for
 complete scripts. Scripts written for Soul keep working: the old `soul` table is an alias of `soulx`.
+
+## AI control (MCP)
+
+SoulX can let an AI app (any Model Context Protocol client) look at an
+instance's screen and operate it: take screenshots, read text, tap, swipe, drag, press keys, type, start apps, run
+your scripts and run Lua it writes.
+
+**It is off by default.** Turn it on in the launcher (**AI control** in the sidebar) or with
+`soulx mcp config --enable`. Then connect your AI app once:
+
+In the AI app, add an MCP server (stdio) whose command is the `soulx` executable and whose argument is `mcp`. In
+an app's JSON configuration that is:
+
+```json
+"soulx": { "command": "/usr/local/bin/soulx", "args": ["mcp"] }
+```
+
+`soulx mcp setup` prints this with the right path; the launcher's AI control page has it ready to copy.
+
+### What the AI can use
+
+| tool | what it does |
+|---|---|
+| `list_instances`, `instance_status` | the instances it may use; state, screen size, CPU and memory |
+| `start_instance`, `stop_instance` | start (with or without a window) and stop (permission: start-stop) |
+| `screenshot` | an image of the screen (or a region), scaled to `max_size` (default 1024) |
+| `read_text`, `find_image`, `pixel_color` | OCR, template matching (templates live in the instance's scripts folder), pixel colours |
+| `tap`, `long_press`, `swipe`, `drag_path`, `press_key`, `type_text` | input; coordinates are screen pixels |
+| `list_apps`, `launch_app`, `stop_app`, `install_app` | apps (installing needs the install permission) |
+| `list_scripts`, `run_script`, `stop_script` | the instance's own scripts: run and wait, or in the background (permission: scripts) |
+| `run_lua` | Lua the AI writes, with SoulX's script API (permission: lua; always sandboxed) |
+
+### Security
+
+- **Local only.** The AI app starts `soulx mcp` itself and talks to it over stdin and stdout. SoulX opens no
+  network port, so nothing on the network can reach it.
+- **Off switch that acts at once.** Every tool call re-reads the settings, so turning AI control off (or removing
+  an instance or a permission) applies to the next call of an AI that is already connected.
+- **Only the instances you allow.** "All instances" or a list; the others are invisible to the AI.
+- **Permissions:** start and stop instances (on by default), install apps (**off** by default), run your scripts
+  (on), run Lua it writes (on). Looking and touching are always allowed while AI control is on.
+- **Sandboxed Lua.** Code the AI sends runs without `io`, without the file, process and environment functions of
+  `os`, without `load`, `dofile`, `require` and the emulator console; files can be read or written only inside the
+  instance's scripts folder (absolute paths, `..` and symbolic links out of it are refused). It can operate the
+  instance but cannot read or change anything else on your Mac.
+- **Your scripts only.** `run_script` runs only scripts in the instance's own scripts folder, never another file.
+- **Never available:** creating, deleting or changing instances, and installing the runtime.
+- **Audit log.** Every call (tool, instance, arguments, success) goes to `~/.soulx-android/logs/mcp.log`; the
+  launcher shows the recent ones, and `soulx mcp log` prints them.
+- Every tool has a time limit. When the AI app disconnects, background script runs it started are stopped.
+
+### Commands
+
+**`soulx mcp [serve|config|log|setup]`**
+
+| | |
+|---|---|
+| `soulx mcp` | the server (your AI app runs this) |
+| `soulx mcp config [--enable\|--disable] [--instances "*"\|a,b] [--allow P,...] [--deny P,...] [--json]` | settings; permissions `start-stop`, `install`, `scripts`, `lua` |
+| `soulx mcp log [-n N] [--json]` | the last N calls |
+| `soulx mcp setup` | how to connect an AI app |
 
 ## Where SoulX keeps its data
 

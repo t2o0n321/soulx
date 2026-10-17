@@ -45,6 +45,8 @@ int  soulx_image_alloc(SoulXImage* img, int w, int h);   // zero-filled (transpa
 int  soulx_image_load_png(const char* path, SoulXImage* out);   // PNG (or JPEG), converted to RGBA
 int  soulx_image_load_mem(const unsigned char* data, size_t len, SoulXImage* out);
 int  soulx_image_save_png(const char* path, const SoulXImage* img);   // atomic (tmp + rename)
+int  soulx_image_encode(const SoulXImage* img, bool jpeg, int quality, unsigned char** out, size_t* len);
+                                                       // PNG or JPEG (quality 1..100) into malloc'd memory
 int  soulx_image_crop(const SoulXImage* src, int x, int y, int w, int h, SoulXImage* out);
                                                        // rectangle must lie inside src
 int  soulx_image_scale(const SoulXImage* src, double factor, SoulXImage* out);   // bilinear, alpha preserved
