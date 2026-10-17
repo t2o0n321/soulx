@@ -6,6 +6,7 @@
 ![Android](https://img.shields.io/badge/Android-17%20(API%2037)-3DDC84?logo=android&logoColor=white)
 ![License](https://img.shields.io/badge/License-MIT-green)
 [![CI](https://github.com/t2o0n321/soulx/actions/workflows/ci.yml/badge.svg)](https://github.com/t2o0n321/soulx/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/t2o0n321/soulx?display_name=tag&sort=semver)](https://github.com/t2o0n321/soulx/releases/latest)
 
 SoulX runs Android 17 on M-series Macs through Hypervisor.framework and draws it on the Mac's GPU. It does one job
 well: install your game, play it in a native macOS window, and let Lua scripts play it for you.
