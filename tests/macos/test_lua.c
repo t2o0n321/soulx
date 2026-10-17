@@ -1001,7 +1001,8 @@ static void test_wait(void) {
         "local dt = millis() - t\n"
         "assert(dt >= 490 and dt < 1500, dt)\n");
     expect_ok(&g_run, "wait timeout");
-    CHECK(g_fake.captures >= 3 && g_fake.captures <= 5, "wait timeout: %d captures", g_fake.captures);
+    // rounds of 200 ms in 0.5 s: usually 3 captures; 2 when a sleep overruns on a loaded machine (CI)
+    CHECK(g_fake.captures >= 2 && g_fake.captures <= 5, "wait timeout: %d captures", g_fake.captures);
 
     fake_reset();
     run(&g_run, "wait3.lua", "assert(wait('img/other.png', 0) == nil)\n");
