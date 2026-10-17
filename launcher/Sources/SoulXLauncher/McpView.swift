@@ -101,6 +101,7 @@ struct McpView: View {
             }
         }
         .formStyle(.grouped)
+        .navigationTitle(L("AI control"))
         .task {
             await model.loadMcp()
             while !Task.isCancelled {

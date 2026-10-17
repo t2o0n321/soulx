@@ -16,20 +16,42 @@ struct ContentView: View {
                 }
                 Section(L("AI")) {
                     ForEach([mcpSelection], id: \.self) { item in
-                        HStack {
-                            Label(L("AI control"), systemImage: "sparkles")
-                            Spacer()
-                            Text(model.mcp?.enabled == true ? L("On") : L("Off"))
-                                .font(.caption).foregroundStyle(model.mcp?.enabled == true ? .green : .secondary)
+                        Label {
+                            HStack {
+                                Text(L("AI control"))
+                                Spacer()
+                                Text(model.mcp?.enabled == true ? L("On") : L("Off"))
+                                    .font(.caption).foregroundStyle(.secondary)
+                            }
+                        } icon: {
+                            Image(systemName: "sparkles")
+                                .foregroundStyle(model.mcp?.enabled == true ? Color.accentColor : Color.secondary)
                         }
                         .tag(Optional(item))
                     }
                 }
-                if let host = model.host {
-                    Section(L("Mac")) {
-                        Text("\(host.cpus) \(L("cores")) · \(host.memoryMB / 1024) GB").foregroundStyle(.secondary)
+            }
+            .safeAreaInset(edge: .bottom) {
+                HStack {
+                    if let host = model.host {
+                        Label("\(host.cpus) \(L("cores")) · \(host.memoryMB / 1024) GB", systemImage: "desktopcomputer")
+                            .font(.caption).foregroundStyle(.secondary)
                     }
+                    Spacer()
+                    Menu {
+                        Picker(L("Language"), selection: Binding(get: { model.language },
+                                                                 set: { c in Task { await model.setLanguage(c) } })) {
+                            ForEach(LanguageChoice.allCases) { Text($0.label).tag($0) }
+                        }
+                        .pickerStyle(.inline)
+                    } label: { Image(systemName: "globe") }
+                    .menuStyle(.borderlessButton)
+                    .menuIndicator(.hidden)
+                    .fixedSize()
+                    .help(L("Language"))
+                    .disabled(model.cli == nil)
                 }
+                .padding(.horizontal, 18).padding(.vertical, 12)
             }
             .navigationSplitViewColumnWidth(min: 200, ideal: 230)
             .toolbar {
@@ -39,19 +61,7 @@ struct ContentView: View {
                 }
             }
         } detail: {
-            Group { detail }
-                .toolbar {
-                    ToolbarItem(placement: .primaryAction) {
-                        Menu {
-                            Picker(L("Language"), selection: Binding(get: { model.language },
-                                                                     set: { c in Task { await model.setLanguage(c) } })) {
-                                ForEach(LanguageChoice.allCases) { Text($0.label).tag($0) }
-                            }
-                            .pickerStyle(.inline)
-                        } label: { Label(L("Language"), systemImage: "globe") }
-                        .disabled(model.cli == nil)
-                    }
-                }
+            detail
         }
         .sheet(isPresented: $creating) { CreateInstanceView(isPresented: $creating) }
         .alert(L("Error"), isPresented: Binding(get: { model.alert != nil }, set: { if !$0 { model.alert = nil } })) {
@@ -83,14 +93,18 @@ struct InstanceRow: View {
     let busy: String?
 
     var body: some View {
-        HStack {
-            Circle().fill(instance.running ? Color.green : Color.secondary.opacity(0.4)).frame(width: 8, height: 8)
-            VStack(alignment: .leading) {
-                Text(instance.name)
-                Text(busy ?? (instance.running ? L("Running") : L("Stopped")))
-                    .font(.caption).foregroundStyle(.secondary)
+        Label {
+            HStack {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(instance.name)
+                    Text(busy.flatMap { $0.isEmpty ? nil : $0 } ?? (instance.running ? L("Running") : L("Stopped")))
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                if busy != nil && busy != "" { Spacer(); ProgressView().controlSize(.small) }
             }
-            if busy != nil && busy != "" { Spacer(); ProgressView().controlSize(.small) }
+        } icon: {
+            Image(systemName: "iphone.gen3")
+                .foregroundStyle(instance.running ? Color.green : Color.secondary)
         }
     }
 }
@@ -115,23 +129,18 @@ struct InstanceDetailView: View {
 
     var body: some View {
         Form {
-            Section {
-                HStack(alignment: .firstTextBaseline) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(instance.name).font(.title2.bold())
-                        Text("\(instance.android ?? L("Android")) · \(instance.running ? L("Running") : L("Stopped"))")
-                            .foregroundStyle(.secondary)
+            if instance.running {
+                Section(L("Status")) {
+                    if let s = model.stats[instance.name] {
+                        LabeledContent(L("CPU"), value: String(format: "%.0f%% (%@)", s.cpuPercent ?? 0, L("of one core")))
+                        LabeledContent(L("Memory"), value: "\((s.memoryMB ?? 0)) MB")
+                        LabeledContent(L("Uptime"), value: uptime(s.uptimeS ?? 0))
+                    } else {
+                        ProgressView().controlSize(.small)
                     }
-                    Spacer()
-                    actions
-                }
-                if let s = model.stats[instance.name], instance.running {
-                    LabeledContent(L("CPU"), value: String(format: "%.0f%% (%@)", s.cpuPercent ?? 0, L("of one core")))
-                    LabeledContent(L("Memory"), value: "\((s.memoryMB ?? 0)) MB")
-                    LabeledContent(L("Uptime"), value: uptime(s.uptimeS ?? 0))
+                    volumeRow
                 }
             }
-            if instance.running { volumeSection }
             ScriptsSection(instance: instance.name)
             SettingsForm(settings: $edited, recommended: Profile.recommended(hostMemoryGB: model.hostMemoryGB),
                          minDataGB: instance.dataGB)
@@ -157,6 +166,9 @@ struct InstanceDetailView: View {
             }
         }
         .formStyle(.grouped)
+        .navigationTitle(instance.name)
+        .navigationSubtitle("\(instance.android ?? L("Android")) · \(instance.running ? L("Running") : L("Stopped"))")
+        .toolbar { toolbarActions }
         .onChange(of: instance) { _, new in if edited == instance.settings { edited = new.settings } }
         .task(id: instance.running) { if instance.running { await followVolume() } }
         .confirmationDialog(L("Delete this instance and everything on it (apps and game data)?"),
@@ -166,37 +178,75 @@ struct InstanceDetailView: View {
         }
     }
 
-    @ViewBuilder private var actions: some View {
+    /// Toolbar: a secondary action (Stop, or the ⋯ menu) and, apart from it, the main one (Open window, or Start).
+    @ToolbarContentBuilder private var toolbarActions: some ToolbarContent {
+        ToolbarItem(placement: .primaryAction) { secondaryAction }
+        if #available(macOS 26.0, *) {
+            ToolbarSpacer(.fixed, placement: .primaryAction)
+        }
+        ToolbarItem(placement: .primaryAction) { mainAction }
+    }
+
+    @ViewBuilder private var secondaryAction: some View {
         if let label = model.busy[instance.name], !label.isEmpty {
-            ProgressView().controlSize(.small)
-            Text(label).foregroundStyle(.secondary)
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.small)
+                Text(label).foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 10)
         } else if instance.running {
-            Button(L("Open window")) { Task { await model.openWindow(instance.name) } }
-            Button(L("Stop")) { Task { await model.stop(instance.name) } }
+            Button { Task { await model.stop(instance.name) } } label: {
+                Label(L("Stop"), systemImage: "stop.fill")
+            }
+            .help(L("Stop"))
         } else {
-            Menu(L("Start")) {
-                Button(L("Start")) { Task { await model.start(instance.name) } }
+            Menu {
                 Button(L("Start in background")) { Task { await model.start(instance.name, headless: true) } }
-            } primaryAction: { Task { await model.start(instance.name) } }
-            .fixedSize()
-            Button(L("Delete…"), role: .destructive) { confirmDelete = true }
+                Divider()
+                Button(L("Delete…"), role: .destructive) { confirmDelete = true }
+            } label: {
+                Label(L("More"), systemImage: "ellipsis")
+            }
+            .menuIndicator(.hidden)
+            .help(L("More"))
         }
     }
 
-    @ViewBuilder private var volumeSection: some View {
-        Section(L("Volume")) {
+    @ViewBuilder private var mainAction: some View {
+        if let label = model.busy[instance.name], !label.isEmpty {
+            EmptyView()
+        } else if instance.running {
+            Button { Task { await model.openWindow(instance.name) } } label: {
+                Label(L("Open window"), systemImage: "macwindow").labelStyle(.titleAndIcon)
+            }
+            .prominentToolbarButton()
+            .help(L("Open window"))
+        } else {
+            Button { Task { await model.start(instance.name) } } label: {
+                Label(L("Start"), systemImage: "play.fill").labelStyle(.titleAndIcon)
+            }
+            .prominentToolbarButton()
+            .help(L("Start"))
+        }
+    }
+
+    @ViewBuilder private var volumeRow: some View {
+        LabeledContent(L("Volume")) {
             if let v = volume, !v.audio {
                 Text(L("No sound device (turn Sound on in Settings)")).foregroundStyle(.secondary)
             } else if let v = volume {
-                HStack {
-                    Image(systemName: v.muted ? "speaker.slash" : "speaker.wave.2")
-                    Slider(value: $volumeLevel, in: 0...Double(max(1, v.max)), step: 1) { editing in
+                HStack(spacing: 10) {
+                    Image(systemName: v.muted ? "speaker.slash.fill" : "speaker.wave.2.fill")
+                        .foregroundStyle(.secondary).frame(width: 22)
+                    Slider(value: $volumeLevel, in: 0...Double(max(1, v.max))) { editing in
                         draggingVolume = editing
                         if !editing {
+                            volumeLevel = volumeLevel.rounded()          // Android's steps
                             let pct = Int((volumeLevel * 100 / Double(max(1, v.max))).rounded())
                             Task { volume = await model.setVolume(instance.name, percent: pct) ?? volume }
                         }
                     }
+                    .frame(width: 240)
                     Toggle(L("Muted"), isOn: Binding(get: { v.muted }, set: { m in
                         Task { volume = await model.setVolume(instance.name, mute: m) ?? volume }
                     }))
@@ -239,6 +289,9 @@ struct CreateInstanceView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            Text(L("New instance")).font(.title3.bold())
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 20).padding(.top, 18)
             Form {
                 Section {
                     TextField(L("Name"), text: $name)
@@ -307,5 +360,16 @@ struct SetupView: View {
             }
         }
         .formStyle(.grouped)
+    }
+}
+
+extension View {
+    /// The toolbar's main button: Liquid Glass's prominent style on macOS 26 (sized for the toolbar), else bordered.
+    @ViewBuilder func prominentToolbarButton() -> some View {
+        if #available(macOS 26.0, *) {
+            self.buttonStyle(.glassProminent)
+        } else {
+            self.buttonStyle(.borderedProminent)
+        }
     }
 }

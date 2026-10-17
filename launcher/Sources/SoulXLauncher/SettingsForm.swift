@@ -14,7 +14,7 @@ struct SettingsForm: View {
         Section(L("Settings")) {
             Picker(L("Performance"), selection: profileBinding) {
                 ForEach(Profile.allCases) { p in
-                    Text(L(p.rawValue) + (p == recommended ? "  · " + L("recommended for this Mac") : "")).tag(Optional(p))
+                    Text(L(p.rawValue) + (p == recommended ? " · " + L("recommended for this Mac") : "")).tag(Optional(p))
                 }
                 if settings.profile == nil { Text(L("Custom")).tag(Optional<Profile>.none) }
             }
@@ -31,8 +31,6 @@ struct SettingsForm: View {
                     Text("\(L("Custom")) \(settings.width)×\(settings.height)").tag(Resolution.custom)
                 }
             }
-        }
-        Section {
             Button {
                 withAnimation(.easeInOut(duration: 0.2)) { showAdvanced.toggle() }
             } label: {
@@ -55,11 +53,8 @@ struct SettingsForm: View {
                 Picker(L("Memory"), selection: $settings.ramMB) {
                     ForEach([4096, 6144, 8192, 12288], id: \.self) { Text("\($0 / 1024) GB").tag($0) }
                 }
-                LabeledContent {
-                    HStack(spacing: 6) {
-                        Text("\(settings.dataGB) GB").monospacedDigit()
-                        Stepper("", value: $settings.dataGB, in: minDataGB...64, step: 2).labelsHidden()
-                    }
+                Picker(selection: $settings.dataGB) {
+                    ForEach(storageChoices, id: \.self) { Text("\($0) GB").tag($0) }
                 } label: {
                     Text(L("Storage"))
                     if minDataGB > 4 { Text(L("Storage can only grow.")) }
@@ -109,6 +104,11 @@ struct SettingsForm: View {
                 }
             }
         }
+    }
+
+    /// Sizes offered for storage: common ones, never below what the instance already has (it only grows).
+    private var storageChoices: [Int] {
+        Set([8, 16, 24, 32, 48, 64, settings.dataGB, minDataGB]).filter { $0 >= minDataGB }.sorted()
     }
 
     private var profileBinding: Binding<Profile?> {

@@ -18,7 +18,7 @@ concurrency:
 jobs:
   release:
     name: Package SoulX.app (macOS arm64)
-    runs-on: macos-15
+    runs-on: macos-26
     steps:
       - uses: actions/checkout@v7
         with:
@@ -47,6 +47,7 @@ jobs:
       - name: Check the app
         run: |
           app=build/dist/SoulX.app
+          otool -l "$app/Contents/MacOS/SoulX" | grep -A4 LC_BUILD_VERSION | grep sdk   # 26 or later: the Liquid Glass design
           codesign --verify --strict --deep "$app"
           "$app/Contents/Helpers/soulx" version
           SOULX_HOME="$RUNNER_TEMP/soulx-home" "$app/Contents/Helpers/soulx" list --json

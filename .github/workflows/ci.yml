@@ -13,7 +13,7 @@ concurrency:
 jobs:
   build-and-test:
     name: Build and test (macOS arm64, ${{ matrix.build }})
-    runs-on: macos-15
+    runs-on: macos-26
     strategy:
       fail-fast: false
       matrix:
@@ -55,7 +55,7 @@ jobs:
 
   launcher:
     name: Launcher (SwiftUI) build and tests
-    runs-on: macos-15
+    runs-on: macos-26
     defaults:
       run:
         working-directory: launcher

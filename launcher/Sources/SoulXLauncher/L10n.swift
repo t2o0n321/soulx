@@ -64,6 +64,8 @@ private let table: [String: (String, String)] = [   // English key: (繁體, 简
 
     "Custom": ("自訂", "自定义"),
     "recommended for this Mac": ("這台 Mac 建議", "这台 Mac 建议"),
+    "Status": ("狀態", "状态"),
+    "More": ("更多", "更多"),
     "Orientation": ("螢幕方向", "屏幕方向"),
     "Portrait": ("直向", "竖屏"),
     "Landscape": ("橫向", "横屏"),
