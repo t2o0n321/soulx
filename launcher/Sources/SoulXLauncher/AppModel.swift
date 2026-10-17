@@ -49,13 +49,13 @@ final class AppModel: ObservableObject {
 
     private func startStats() {
         guard let cli else { return }
-        statsProcess = cli.stream(["stats", "--watch", "--json", "--interval", "2000"], onLine: { line in
+        statsProcess = cli.stream(["stats", "--watch", "--json", "--interval", "2000"], onLine: { [weak self] line in
             guard let s = try? JSONDecoder().decode(StatsSample.self, from: Data(line.utf8)) else { return }
             Task { @MainActor [weak self] in
                 self?.host = s.host
                 self?.stats = Dictionary(s.instances.map { ($0.name, $0) }, uniquingKeysWith: { a, _ in a })
             }
-        }, onExit: { _ in
+        }, onExit: { [weak self] _ in
             Task { @MainActor [weak self] in       // restart it if it ends (it should run until we quit)
                 try? await Task.sleep(nanoseconds: 3_000_000_000)
                 self?.startStats()
@@ -119,7 +119,7 @@ final class AppModel: ObservableObject {
         guard let cli, !settingUp else { return }
         settingUp = true
         setupLog = []
-        cli.stream(["setup", "--accept-licenses"], onLine: { line in
+        cli.stream(["setup", "--accept-licenses"], onLine: { [weak self] line in
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 // progress lines repeat with new numbers: replace the previous one of the same package
@@ -129,7 +129,7 @@ final class AppModel: ObservableObject {
                     self.setupLog.append(line)
                 }
             }
-        }, onExit: { status in
+        }, onExit: { [weak self] status in
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 self.settingUp = false
