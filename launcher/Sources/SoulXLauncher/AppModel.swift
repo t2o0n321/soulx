@@ -14,6 +14,7 @@ final class AppModel: ObservableObject {
     @Published var alert: String?
     @Published var setupLog: [String] = []
     @Published var settingUp = false
+    @Published var language: LanguageChoice = .system   // shared with SoulX's window (soulx language)
 
     let cli: SoulXCLI?
     private var statsProcess: Process?
@@ -34,6 +35,23 @@ final class AppModel: ObservableObject {
                 try? await Task.sleep(nanoseconds: 3_000_000_000)
             }
         }
+    }
+
+    /// Reads the saved language once at start (it also decides the window's language).
+    func loadLanguage() async {
+        struct Reply: Decodable { let language: String }
+        if let r = try? await cli?.json(Reply.self, ["language", "--json"]), let c = LanguageChoice(rawValue: r.language) {
+            applyLanguage(c)
+            language = c
+        }
+    }
+
+    func setLanguage(_ c: LanguageChoice) async {
+        guard let cli else { return }
+        let r = await cli.run(["language", c.rawValue])
+        if !r.ok { alert = r.message; return }
+        applyLanguage(c)
+        language = c
     }
 
     func refresh() async {

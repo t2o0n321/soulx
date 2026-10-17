@@ -26,30 +26,42 @@ struct ContentView: View {
                     Button { creating = true } label: { Label(L("New instance"), systemImage: "plus") }
                         .disabled(model.cli == nil)
                 }
-                ToolbarItem {
-                    Button { Task { await model.refresh() } } label: {
-                        Label(L("Refresh"), systemImage: "arrow.clockwise")
-                    }
-                }
             }
         } detail: {
-            if model.cli == nil {
-                ContentUnavailableView(L("Error"), systemImage: "exclamationmark.triangle",
-                    description: Text(L("The soulx command was not found. Build it (scripts/build_macos.sh) or set SOULX_CLI.")))
-            } else if let rt = model.runtime, !rt.ready {
-                SetupView(runtime: rt)
-            } else if let inst = model.instance(model.selection) {
-                InstanceDetailView(instance: inst).id(inst.name)
-            } else {
-                ContentUnavailableView(model.instances.isEmpty ? L("No instances yet.") : L("Select an instance."),
-                                       systemImage: "iphone")
-            }
+            Group { detail }
+                .toolbar {
+                    ToolbarItem(placement: .primaryAction) {
+                        Menu {
+                            Picker(L("Language"), selection: Binding(get: { model.language },
+                                                                     set: { c in Task { await model.setLanguage(c) } })) {
+                                ForEach(LanguageChoice.allCases) { Text($0.label).tag($0) }
+                            }
+                            .pickerStyle(.inline)
+                        } label: { Label(L("Language"), systemImage: "globe") }
+                        .disabled(model.cli == nil)
+                    }
+                }
         }
         .sheet(isPresented: $creating) { CreateInstanceView(isPresented: $creating) }
         .alert(L("Error"), isPresented: Binding(get: { model.alert != nil }, set: { if !$0 { model.alert = nil } })) {
             Button(L("OK")) { model.alert = nil }
         } message: { Text(model.alert ?? "") }
-        .task { model.startPolling() }
+        .task { await model.loadLanguage(); model.startPolling() }
+        .id(model.language)                         // redraw every text in the new language
+    }
+
+    @ViewBuilder private var detail: some View {
+        if model.cli == nil {
+            ContentUnavailableView(L("Error"), systemImage: "exclamationmark.triangle",
+                description: Text(L("The soulx command was not found. Build it (scripts/build_macos.sh) or set SOULX_CLI.")))
+        } else if let rt = model.runtime, !rt.ready {
+            SetupView(runtime: rt)
+        } else if let inst = model.instance(model.selection) {
+            InstanceDetailView(instance: inst).id(inst.name)
+        } else {
+            ContentUnavailableView(model.instances.isEmpty ? L("No instances yet.") : L("Select an instance."),
+                                   systemImage: "iphone")
+        }
     }
 }
 

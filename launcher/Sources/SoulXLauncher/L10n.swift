@@ -4,12 +4,39 @@ import Foundation
 /// window). Keys are the English text.
 enum Lang { case zhHant, zhHans, en }
 
-let currentLang: Lang = {
+/// The user's choice as `soulx language` stores it: "system", "en", "zh-hant" or "zh-hans".
+enum LanguageChoice: String, CaseIterable, Identifiable {
+    case system, en, zhHant = "zh-hant", zhHans = "zh-hans"
+    var id: String { rawValue }
+    /// Each language is named in itself, so it can be found whatever the current language is.
+    var label: String {
+        switch self {
+        case .system: return L("Same as the Mac")
+        case .en: return "English"
+        case .zhHant: return "繁體中文"
+        case .zhHans: return "简体中文"
+        }
+    }
+}
+
+private func systemLang() -> Lang {
     let pref = Locale.preferredLanguages.first?.lowercased() ?? "en"
-    if pref.hasPrefix("zh-hant") || pref.hasPrefix("zh-tw") || pref.hasPrefix("zh-hk") { return .zhHant }
+    if pref.hasPrefix("zh-hant") || pref.hasPrefix("zh-tw") || pref.hasPrefix("zh-hk") || pref.hasPrefix("zh-mo") { return .zhHant }
     if pref.hasPrefix("zh") { return .zhHans }
     return .en
-}()
+}
+
+/// The language in use; the app sets it from the saved choice and when the user picks another one.
+nonisolated(unsafe) var currentLang: Lang = systemLang()
+
+func applyLanguage(_ choice: LanguageChoice) {
+    switch choice {
+    case .system: currentLang = systemLang()
+    case .en: currentLang = .en
+    case .zhHant: currentLang = .zhHant
+    case .zhHans: currentLang = .zhHans
+    }
+}
 
 private let table: [String: (String, String)] = [   // English key: (繁體, 简体)
     "Instances": ("實例", "实例"),
@@ -34,6 +61,7 @@ private let table: [String: (String, String)] = [   // English key: (繁體, 简
     "lite": ("輕量", "轻量"),
     "balanced": ("平衡", "平衡"),
     "performance": ("高效能", "高性能"),
+
     "Custom": ("自訂", "自定义"),
     "recommended for this Mac": ("這台 Mac 建議", "这台 Mac 建议"),
     "Orientation": ("螢幕方向", "屏幕方向"),
@@ -100,13 +128,28 @@ private let table: [String: (String, String)] = [   // English key: (繁體, 简
     "OK": ("好", "好"),
     "Mac": ("Mac", "Mac"),
     "cores": ("核心", "核心"),
+    "Language": ("語言", "语言"),
+    "Advanced settings": ("進階設定", "高级设置"),
+    "Hardware": ("硬體", "硬件"),
+    "Display and performance": ("畫面與效能", "画面与性能"),
+    "System": ("系統", "系统"),
+    "Lean Android": ("精簡 Android", "精简 Android"),
+    "Try Compatibility if a game shows black or broken graphics.": ("遊戲畫面全黑或破圖時，改用相容模式。", "游戏画面全黑或花屏时，改用兼容模式。"),
+    "30 FPS uses about 30% less CPU, good for idle farming.": ("30 FPS 約省 30% CPU，適合掛機。", "30 FPS 约省 30% CPU，适合挂机。"),
+    "Change this when Android has no internet (VPN or company network).": ("Android 上不了網時（VPN 或公司網路）再修改。", "Android 上不了网时（VPN 或公司网络）再修改。"),
+    "Disables preinstalled Google apps games never use; about 600 MB less memory.": ("停用遊戲用不到的預裝 Google app，約省 600 MB 記憶體。", "停用游戏用不到的预装 Google 应用，约省 600 MB 内存。"),
+    "Off removes the sound device; saves a little CPU.": ("關閉會移除音訊裝置，可省一點 CPU。", "关闭会移除音频设备，可省一点 CPU。"),
+    "Same as the Mac": ("跟隨 Mac", "跟随 Mac"),
 ]
 
+// keys that are identifiers rather than English text
+private let english: [String: String] = ["lite": "Lite", "balanced": "Balanced", "performance": "Performance"]
+
 func L(_ key: String) -> String {
-    guard let t = table[key] else { return key }
+    guard let t = table[key] else { return english[key] ?? key }
     switch currentLang {
     case .zhHant: return t.0
     case .zhHans: return t.1
-    case .en: return key
+    case .en: return english[key] ?? key
     }
 }

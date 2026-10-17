@@ -53,6 +53,12 @@ static SoulXLang ui_lang(void) {
     static SoulXLang lang;
     static dispatch_once_t once;
     dispatch_once(&once, ^{
+        // the user's choice (soulx language / the launcher), else the system language
+        const char* chosen = soulx_ui_language();
+        if (strcmp(chosen, "system") != 0) {
+            lang = lang_for_tag(@(chosen));
+            return;
+        }
         NSString* first = [NSLocale preferredLanguages].firstObject;
         lang = lang_for_tag(first ? first : @"en");
     });

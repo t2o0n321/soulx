@@ -69,6 +69,9 @@ bool soulx_is_dir(const char* path);
 int  soulx_rmtree(const char* path);                  // rm -rf, refuses anything outside soulx_home(); 0 ok
 int  soulx_read_file(const char* path, char** data, size_t* len);   // malloc'd, NUL-terminated
 int  soulx_write_file_atomic(const char* path, const char* data, size_t len); // tmp + rename
+const char* soulx_ui_language(void);                  // "system" | "en" | "zh-hant" | "zh-hans" ( first)
+int  soulx_set_ui_language(const char* lang);          // saves it in /ui_language; -1 if unknown
+const char* soulx_lang_canonical(const char* s);       // "zh-TW" -> "zh-hant" ...; NULL if unknown
 uint64_t soulx_dir_size(const char* path);            // bytes, recursive (best effort)
 uint64_t soulx_free_disk_bytes(const char* path);
 

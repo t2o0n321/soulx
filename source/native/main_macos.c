@@ -3315,6 +3315,36 @@ static int cmd_doctor(const CliCommand* self, const CliArgs* a, const CliGlobal*
     return soulx_doctor() == 0 ? CLI_EXIT_OK : CLI_EXIT_FAIL;
 }
 
+enum { LANGUAGE_JSON };
+static const CliOpt k_language_opts[] = {
+    [LANGUAGE_JSON] = { "json", 0, false },
+};
+
+static int cmd_language(const CliCommand* self, const CliArgs* a, const CliGlobal* g) {
+    (void)g;
+    if (a->npos > 1) {
+        return usage_error(self, "expected one language: system, en, zh-hant or zh-hans");
+    }
+    if (a->npos == 1) {
+        if (!soulx_lang_canonical(a->pos[0])) {
+            return usage_error(self, "unknown language '%s' (use system, en, zh-hant or zh-hans)", a->pos[0]);
+        }
+        if (soulx_set_ui_language(a->pos[0]) != 0) {
+            soulx_log(SOULX_LOG_ERROR, "could not save the language in %s", soulx_home());
+            return CLI_EXIT_FAIL;
+        }
+    }
+    const char* lang = soulx_ui_language();
+    if (a->val[LANGUAGE_JSON]) {
+        printf("{\"language\": ");
+        json_str(stdout, lang);
+        printf(", \"from_env\": %s}\n", soulx_lang_canonical(getenv("SOULX_LANG")) ? "true" : "false");
+    } else {
+        printf("%s\n", lang);
+    }
+    return CLI_EXIT_OK;
+}
+
 enum { RUNTIME_JSON };
 static const CliOpt k_runtime_opts[] = {
     [RUNTIME_JSON] = { "json", 0, false },
@@ -3792,6 +3822,17 @@ static const CliCommand k_commands[] = {
       "Checks this Mac (Apple Silicon, Hypervisor, memory, free disk), SoulX's runtime, the adb server\n"
       "and your instances. Exits with 1 when something keeps SoulX from running.\n",
       NO_OPTS, CLI_INTERLEAVED, false },
+
+    { "language", cmd_language, GROUP_TOOLS, "language [lang]", "show or set the language of the window and launcher",
+      "soulx language [system|en|zh-hant|zh-hans] [--json]\n"
+      "\n"
+      "Shows or sets the language of SoulX's window and of the launcher: English, Traditional Chinese\n"
+      "or Simplified Chinese. \"system\" (the default) follows the Mac's language. The environment\n"
+      "variable SOULX_LANG overrides the saved choice. A window that is already open keeps its\n"
+      "language until it is opened again. (The soulx command itself always prints English.)\n"
+      "\n"
+      "  --json   print the result as JSON\n",
+      k_language_opts, NOPTS(k_language_opts), CLI_INTERLEAVED, false },
 
     { "runtime", cmd_runtime, GROUP_TOOLS, "runtime", "show the installed runtime packages",
       "soulx runtime [--json]\n"

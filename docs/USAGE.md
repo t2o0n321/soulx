@@ -83,6 +83,7 @@ SoulX for those commands.
 | `SOULX_HOME` | the folder SoulX keeps everything in (default `~/.soulx-android`) |
 | `SOULX_INSTANCE` | the default instance name for `-i` |
 | `SOULX_VERBOSE=1` | the same as `-v` on every command |
+| `SOULX_LANG=en` | the language of the window and launcher for this run (`en`, `zh-hant`, `zh-hans`), over the saved choice |
 | `SOULX_ACCEPT_ANDROID_SDK_LICENSE=1` | accept the Android SDK license without asking (the same as `soulx setup --accept-licenses`) |
 | `SOULX_ENGINE_FEATURES=A,B` | diagnostics: passes `-feature A -feature B` to the engine at start |
 
@@ -109,6 +110,10 @@ your instances. It exits with 1 when something keeps SoulX from running.
 
 **`soulx runtime [--json]`** shows which runtime packages are installed, their versions and disk usage. `--json` also
 says whether the default runtime is ready to run (for launchers).
+
+**`soulx language [system|en|zh-hant|zh-hans] [--json]`** shows or sets the language of SoulX's window and of the
+launcher. `system` (the default) follows the Mac's language; the choice is saved in `~/.soulx-android/ui_language`.
+An open window keeps its language until it is opened again. The `soulx` command itself always prints English.
 
 **`soulx version`** prints the SoulX version and the Android engine it runs.
 

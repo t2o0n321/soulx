@@ -17,6 +17,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <sys/mount.h>
 #include <sys/param.h>
 #include <sys/stat.h>
@@ -741,4 +742,46 @@ int soulx_migrate_legacy_home(void) {
     migrate_avds(home);
     soulx_log(SOULX_LOG_INFO, "moved Soul's runtime, instances and keymaps from %s to %s", legacy, home);
     return 0;
+}
+
+// ---------------------------------------------------------------------------
+// UI language of SoulX's window and launcher: $SOULX_LANG, else $SOULX_HOME/ui_language, else the system's
+// ---------------------------------------------------------------------------
+
+static const char* lang_canonical(const char* s) {
+    if (!s) return NULL;
+    if (!strcasecmp(s, "system")) return "system";
+    if (!strcasecmp(s, "en") || !strncasecmp(s, "en-", 3)) return "en";
+    if (!strcasecmp(s, "zh-hant") || !strcasecmp(s, "zh-tw") || !strcasecmp(s, "zh-hk")) return "zh-hant";
+    if (!strcasecmp(s, "zh-hans") || !strcasecmp(s, "zh-cn") || !strcasecmp(s, "zh")) return "zh-hans";
+    return NULL;
+}
+
+const char* soulx_lang_canonical(const char* s) { return lang_canonical(s); }
+
+const char* soulx_ui_language(void) {
+    const char* env = lang_canonical(getenv("SOULX_LANG"));
+    if (env) return env;
+    char path[PATH_MAX];
+    char* data = NULL;
+    size_t len = 0;
+    const char* v = "system";
+    if (soulx_path(path, sizeof(path), "ui_language") == 0 && soulx_read_file(path, &data, &len) == 0) {
+        data[strcspn(data, " \t\r\n")] = '\0';
+        const char* c = lang_canonical(data);
+        if (c) v = c;
+    }
+    free(data);
+    return v;
+}
+
+int soulx_set_ui_language(const char* lang) {
+    const char* c = lang_canonical(lang);
+    if (!c) return -1;
+    if (soulx_ensure_layout() != 0) return -1;
+    char path[PATH_MAX];
+    if (soulx_path(path, sizeof(path), "ui_language") != 0) return -1;
+    char body[16];
+    int n = snprintf(body, sizeof(body), "%s\n", c);
+    return soulx_write_file_atomic(path, body, (size_t)n);
 }

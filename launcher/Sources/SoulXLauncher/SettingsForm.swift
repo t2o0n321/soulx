@@ -8,6 +8,7 @@ struct SettingsForm: View {
     var recommended: Profile
     var minDataGB: Int = 4             // existing instances: storage only grows
     var allowOrientation = true
+    @AppStorage("showAdvancedSettings") private var showAdvanced = false
 
     var body: some View {
         Section(L("Settings")) {
@@ -32,34 +33,80 @@ struct SettingsForm: View {
             }
         }
         Section {
-            DisclosureGroup(L("Advanced")) {
-                Stepper("\(L("CPU cores")): \(settings.cores)", value: $settings.cores, in: 1...8)
+            Button {
+                withAnimation(.easeInOut(duration: 0.2)) { showAdvanced.toggle() }
+            } label: {
+                HStack {
+                    Text(L("Advanced settings"))
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .rotationEffect(.degrees(showAdvanced ? 90 : 0))
+                        .foregroundStyle(.secondary)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+        }
+        if showAdvanced {
+            Section(L("Hardware")) {
+                Picker(L("CPU cores"), selection: $settings.cores) {
+                    ForEach(1...8, id: \.self) { Text("\($0)").tag($0) }
+                }
                 Picker(L("Memory"), selection: $settings.ramMB) {
                     ForEach([4096, 6144, 8192, 12288], id: \.self) { Text("\($0 / 1024) GB").tag($0) }
                 }
-                Stepper("\(L("Storage")): \(settings.dataGB) GB", value: $settings.dataGB, in: minDataGB...64, step: 2)
-                if minDataGB > 4 {
-                    Text(L("Storage can only grow.")).font(.caption).foregroundStyle(.secondary)
+                LabeledContent {
+                    HStack(spacing: 6) {
+                        Text("\(settings.dataGB) GB").monospacedDigit()
+                        Stepper("", value: $settings.dataGB, in: minDataGB...64, step: 2).labelsHidden()
+                    }
+                } label: {
+                    Text(L("Storage"))
+                    if minDataGB > 4 { Text(L("Storage can only grow.")) }
                 }
-                Picker(L("Graphics"), selection: $settings.gpu) {
+            }
+            Section(L("Display and performance")) {
+                Picker(selection: $settings.gpu) {
                     Text(L("Automatic (Mac GPU)")).tag(GPUMode.host)
                     Text(L("Compatibility (OpenGL ES)")).tag(GPUMode.hostNoVulkan)
                     Text(L("Software (slow)")).tag(GPUMode.software)
                     if settings.gpu == .metal { Text(L("Metal (experimental)")).tag(GPUMode.metal) }
+                } label: {
+                    Text(L("Graphics"))
+                    Text(L("Try Compatibility if a game shows black or broken graphics."))
                 }
-                Picker(L("Frame rate cap"), selection: $settings.fps) {
+                Picker(selection: $settings.fps) {
                     Text("30 FPS").tag(30)
                     Text("45 FPS").tag(45)
-                    Text("60 FPS (\(L("no cap")))").tag(60)
+                    Text("60 FPS").tag(60)
                     if ![30, 45, 60].contains(settings.fps) { Text("\(settings.fps) FPS").tag(settings.fps) }
+                } label: {
+                    Text(L("Frame rate cap"))
+                    Text(L("30 FPS uses about 30% less CPU, good for idle farming."))
                 }
-                HStack {
-                    TextField(L("DNS servers"), text: $settings.dns, prompt: Text(L("the Mac's")))
-                    Button(L("Use public DNS")) { settings.dns = "1.1.1.1,8.8.8.8" }
+            }
+            Section(L("System")) {
+                LabeledContent {
+                    HStack {
+                        TextField("", text: $settings.dns, prompt: Text(L("the Mac's")))
+                            .multilineTextAlignment(.trailing)
+                            .frame(maxWidth: 180)
+                        Button(L("Use public DNS")) { settings.dns = "1.1.1.1,8.8.8.8" }
+                            .controlSize(.small)
+                    }
+                } label: {
+                    Text(L("DNS servers"))
+                    Text(L("Change this when Android has no internet (VPN or company network)."))
                 }
-                Toggle(L("Keep screen on"), isOn: $settings.stayAwake)
-                Toggle(L("Lean Android (disable unused Google apps, about 600 MB less)"), isOn: $settings.lean)
-                Toggle(L("Sound"), isOn: $settings.audio)
+                Toggle(isOn: $settings.stayAwake) { Text(L("Keep screen on")) }
+                Toggle(isOn: $settings.lean) {
+                    Text(L("Lean Android"))
+                    Text(L("Disables preinstalled Google apps games never use; about 600 MB less memory."))
+                }
+                Toggle(isOn: $settings.audio) {
+                    Text(L("Sound"))
+                    Text(L("Off removes the sound device; saves a little CPU."))
+                }
             }
         }
     }
