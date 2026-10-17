@@ -179,5 +179,12 @@ struct CLITests {
         let fake = try makeFake()
         let cli = SoulXCLI.locate(environment: ["SOULX_CLI": fake.path], bundle: Bundle.main)
         #expect(cli?.executable.path == fake.path)
+        // no SOULX_CLI: found from the source tree (any SwiftPM output layout)
+        let repoRoot = fake.deletingLastPathComponent()
+        let src = repoRoot.appendingPathComponent("launcher/Sources/SoulXCore/CLI.swift").path
+        try FileManager.default.createDirectory(at: repoRoot.appendingPathComponent("build/macos"), withIntermediateDirectories: true)
+        try FileManager.default.copyItem(at: fake, to: repoRoot.appendingPathComponent("build/macos/soulx"))
+        let found = SoulXCLI.locate(environment: [:], bundle: Bundle.main, sourceFile: src)
+        #expect(found?.executable.path == repoRoot.appendingPathComponent("build/macos/soulx").path)
     }
 }

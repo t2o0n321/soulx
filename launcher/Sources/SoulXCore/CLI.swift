@@ -39,18 +39,23 @@ public final class SoulXCLI: @unchecked Sendable {
     /// then the usual install locations.
     public static func locate(environment: [String: String] = ProcessInfo.processInfo.environment,
                               bundle: Bundle = .main,
-                              fileManager: FileManager = .default) -> SoulXCLI? {
+                              fileManager: FileManager = .default,
+                              sourceFile: String = #filePath) -> SoulXCLI? {
         var candidates: [URL] = []
         if let p = environment["SOULX_CLI"], !p.isEmpty { candidates.append(URL(fileURLWithPath: p)) }
         if let r = bundle.resourceURL { candidates.append(r.appendingPathComponent("soulx")) }
-        if let exe = bundle.executableURL {
-            // development: launcher/.build/<config>/SoulXLauncher -> ../build/macos/soulx
+        // development: the launcher runs from somewhere under launcher/.build/ (the layout differs between SwiftPM
+        // versions: .build/debug/, .build/arm64-apple-macosx/debug/, .build/out/Products/Debug/ ...): walk up
+        if let exe = bundle.executableURL?.resolvingSymlinksInPath() {
             var dir = exe.deletingLastPathComponent()
-            for _ in 0..<5 {
+            while dir.path != "/" {
                 candidates.append(dir.appendingPathComponent("build/macos/soulx"))
                 dir = dir.deletingLastPathComponent()
             }
         }
+        // and the repository this source file was built from (launcher/Sources/SoulXCore/CLI.swift)
+        candidates.append(URL(fileURLWithPath: sourceFile).deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("build/macos/soulx"))
         candidates += ["/usr/local/bin/soulx", "/opt/homebrew/bin/soulx"].map(URL.init(fileURLWithPath:))
         for c in candidates where fileManager.isExecutableFile(atPath: c.path) { return SoulXCLI(executable: c) }
         return nil
