@@ -1,6 +1,6 @@
 name: Release
 
-# Pushing a tag vX.Y.Z (matching SOULX_VERSION_STRING in source/core/soulx_android.h) tests, packages and publishes
+# Pushing a tag vX.Y.Z (matching the VERSION file; scripts/versioning/ makes both) tests, packages and publishes
 # SoulX.app as a GitHub Release. Run it by hand (Actions > Release > Run workflow) to only build the .dmg as an
 # artifact, without publishing anything.
 on:
@@ -27,10 +27,10 @@ jobs:
       - name: Version
         id: version
         run: |
-          version="$(sed -n 's/^#define SOULX_VERSION_STRING "\(.*\)"$/\1/p' source/core/soulx_android.h)"
+          version="$(tr -d '[:space:]' < VERSION)"
           echo "version=$version" >> "$GITHUB_OUTPUT"
           if [[ "$GITHUB_REF_TYPE" == tag && "$GITHUB_REF_NAME" != "v$version" ]]; then
-            echo "::error::tag $GITHUB_REF_NAME does not match SOULX_VERSION_STRING $version"
+            echo "::error::tag $GITHUB_REF_NAME does not match VERSION ($version)"
             exit 1
           fi
 
@@ -59,9 +59,9 @@ jobs:
         with:
           name: SoulX-${{ steps.version.outputs.version }}
           path: |
-            build/dist/SoulX-*.dmg
-            build/dist/SoulX-*.zip
-            build/dist/SoulX-*.sha256
+            build/dist/SoulX-v*.dmg
+            build/dist/SoulX-v*.zip
+            build/dist/SoulX-v*.sha256
           retention-days: 14
 
       - name: Publish the GitHub Release
@@ -72,7 +72,7 @@ jobs:
           v="${{ steps.version.outputs.version }}"
           ./scripts/release_notes.sh "$v" > "$RUNNER_TEMP/notes.md"
           gh release create "$GITHUB_REF_NAME" \
-            --title "SoulX $v" \
+            --title "SoulX v$v" \
             --notes-file "$RUNNER_TEMP/notes.md" \
             --verify-tag \
-            build/dist/SoulX-"$v".dmg build/dist/SoulX-"$v".zip build/dist/SoulX-"$v".sha256
+            build/dist/SoulX-v"$v".dmg build/dist/SoulX-v"$v".zip build/dist/SoulX-v"$v".sha256

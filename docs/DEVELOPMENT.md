@@ -43,8 +43,8 @@ cmake --build build/macos -j
 cmake --build build/macos --target soulx_tests && (cd build/macos && ctest --output-on-failure)
 ```
 
-The binary targets macOS 12 by default (`CMAKE_OSX_DEPLOYMENT_TARGET`). The version has a single source,
-`SOULX_VERSION_STRING` in `source/core/soulx_android.h`.
+The binary targets macOS 12 by default (`CMAKE_OSX_DEPLOYMENT_TARGET`). The version has a single source, the
+`VERSION` file (YY.M.PATCH; CMake passes it to the code as `SOULX_VERSION_STRING`).
 
 **"You have not agreed to the Xcode license agreements".** When Xcode is installed but its license was never accepted,
 `cc`, `git` and `python3` refuse to run. Accept it with `sudo xcodebuild -license`, or build with the Command Line
@@ -57,20 +57,23 @@ DEVELOPER_DIR=/Library/Developer/CommandLineTools ./scripts/build_macos.sh --tes
 ## Packaging and releases
 
 ```bash
-./scripts/package_macos.sh             # build/dist/SoulX.app, SoulX-<version>.dmg, .zip and .sha256
+./scripts/package_macos.sh             # build/dist/SoulX.app, SoulX-v<version>.dmg, .zip and .sha256
 ./scripts/package_macos.sh --skip-build --no-dmg
 ```
 
 `SoulX.app` holds the launcher (`Contents/MacOS/SoulX`), the CLI (`Contents/Helpers/soulx`, which also runs SoulX's
 window and the MCP server) and the icon (drawn by `scripts/make_icon.swift`, the same drawing as `SoulXAppIcon()` in
-the window). Its version comes from `SOULX_VERSION_STRING`; the build number is the commit count. The app is signed
+the window). Its version comes from `VERSION`; the build number is the commit count. The app is signed
 ad hoc only: it is deliberately not signed with a Developer ID nor notarized, so people allow it once in
 System Settings > Privacy & Security.
 
 Releases are published by `.github/workflows/release.yml`:
 
-1. Set `SOULX_VERSION_STRING` in `source/core/soulx_android.h` and add a `## X.Y.Z` section to `CHANGELOG.md`.
-2. Commit, then `git tag vX.Y.Z && git push origin vX.Y.Z`.
+1. Describe the changes under `## Unreleased` in `CHANGELOG.md` and commit.
+2. Run `scripts/versioning/bump-version-calendar.sh` for the first release of a month (`YY.M.0`) or
+   `scripts/versioning/bump-version-patch.sh` for another one in the same month (`YY.M.PATCH+1`). It writes
+   `VERSION`, turns `## Unreleased` into `## v<version> (<date>)`, commits `Release v<version>` and tags it
+   (`--dry-run` shows what it would do). Then `git push origin main v<version>`.
 3. The workflow checks that the tag matches the version, runs every test, packages the app and creates the GitHub
    Release with the .dmg, .zip and checksums. Its text is the CHANGELOG section plus the install steps
    (`scripts/release_notes.sh`).

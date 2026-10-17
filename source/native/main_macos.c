@@ -3765,7 +3765,7 @@ static int cmd_version(const CliCommand* self, const CliArgs* a, const CliGlobal
     const SoulXPackage* engine = soulx_runtime_find("emulator");
     const SoulXPackage* img = soulx_runtime_default_image();
     int api = img ? target_api(img->target) : 0;
-    printf("SoulX Android Emulator %s (macOS %s) \u2014 engine: Android Emulator %s, %s (API %d)\n",
+    printf("SoulX Android Emulator v%s (macOS %s) \u2014 engine: Android Emulator %s, %s (API %d)\n",
            SOULX_VERSION_STRING, CLI_HOST_ARCH, engine ? nz(engine->version, "?") : "?",
            img ? nz(img->android_name, "Android") : "Android", api);
     return CLI_EXIT_OK;
@@ -3784,7 +3784,7 @@ static void print_overview(FILE* f) {
             width = w;
         }
     }
-    fprintf(f, "SoulX Android Emulator %s - play Android games on your Mac (Android 17, Apple Silicon)\n",
+    fprintf(f, "SoulX Android Emulator v%s - play Android games on your Mac (Android 17, Apple Silicon)\n",
             SOULX_VERSION_STRING);
     for (int grp = 0; grp < GROUP_COUNT; grp++) {
         fprintf(f, "\n%s:\n", titles[grp]);

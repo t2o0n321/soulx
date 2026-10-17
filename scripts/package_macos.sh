@@ -3,7 +3,7 @@
 # SoulX Android Emulator - package SoulX.app and its .dmg
 #
 # Builds the soulx CLI (Release) and the SwiftUI launcher, assembles build/dist/SoulX.app, signs it ad hoc and makes
-# build/dist/SoulX-<version>.dmg and a .zip. SoulX is deliberately not signed with a Developer ID nor notarized:
+# build/dist/SoulX-v<version>.dmg and a .zip. SoulX is deliberately not signed with a Developer ID nor notarized:
 # on first open people allow it in System Settings > Privacy & Security ("Open Anyway"). Apple Silicon still needs
 # an ad hoc signature on every executable, which involves no certificate.
 #
@@ -42,8 +42,8 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "$script_dir/.." && pwd)"
 cd "$repo_root"
 
-version="$(sed -n 's/^#define SOULX_VERSION_STRING "\(.*\)"$/\1/p' source/core/soulx_android.h)"
-[[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "cannot read SOULX_VERSION_STRING from source/core/soulx_android.h"
+version="$(tr -d '[:space:]' < VERSION)"
+[[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "VERSION must hold one version like 26.10.0"
 build_number="$(git rev-list --count HEAD 2>/dev/null || echo 1)"
 
 dist="build/dist"
@@ -107,22 +107,22 @@ codesign --force --timestamp=none --sign - "$app"
 codesign --verify --strict --deep "$app"
 
 # --- Archives ------------------------------------------------------------------
-zip="$dist/SoulX-$version.zip"
+zip="$dist/SoulX-v$version.zip"
 rm -f -- "$zip"
 ditto -c -k --keepParent "$app" "$zip"
 echo "  $zip"
 
 if [[ "$make_dmg" == 1 ]]; then
-    dmg="$dist/SoulX-$version.dmg"
+    dmg="$dist/SoulX-v$version.dmg"
     stage="$dist/dmg"
     rm -rf -- "$stage" "$dmg"
     mkdir -p "$stage"
     cp -R "$app" "$stage/"
     ln -s /Applications "$stage/Applications"
-    hdiutil create -quiet -volname "SoulX $version" -srcfolder "$stage" -fs HFS+ -format UDZO "$dmg"
+    hdiutil create -quiet -volname "SoulX v$version" -srcfolder "$stage" -fs HFS+ -format UDZO "$dmg"
     rm -rf -- "$stage"
     echo "  $dmg"
 fi
 
-(cd "$dist" && shasum -a 256 SoulX-"$version".* > "SoulX-$version.sha256")
+(cd "$dist" && shasum -a 256 SoulX-v"$version".* > "SoulX-v$version.sha256")
 echo "=== Done: $app ==="

@@ -12,11 +12,11 @@
 
 #define SOULX_API
 
-// Version information
-#define SOULX_VERSION_MAJOR 1
-#define SOULX_VERSION_MINOR 2
-#define SOULX_VERSION_PATCH 0
-#define SOULX_VERSION_STRING "1.2.0"
+// Version information: SOULX_VERSION_STRING comes from the VERSION file at the top of the repository (CMake
+// passes it to every target), so there is one place to change it.
+#ifndef SOULX_VERSION_STRING
+#error "SOULX_VERSION_STRING is not set: build with CMake, which reads it from the VERSION file"
+#endif
 #define SOULX_BUILD_DATE __DATE__
 
 // Return codes (functions return >= 0 on success)

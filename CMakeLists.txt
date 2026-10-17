@@ -20,13 +20,14 @@ if(NOT CMAKE_OSX_DEPLOYMENT_TARGET AND "$ENV{MACOSX_DEPLOYMENT_TARGET}" STREQUAL
     set(CMAKE_OSX_DEPLOYMENT_TARGET "12.0" CACHE STRING "Minimum macOS version" FORCE)
 endif()
 
-# Single source of truth for the version: SOULX_VERSION_STRING in soulx_android.h
-file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/source/core/soulx_android.h" SOULX_VERSION_LINE
-     REGEX "^#define SOULX_VERSION_STRING ")
-string(REGEX MATCH "[0-9]+\\.[0-9]+\\.[0-9]+" SOULX_VERSION "${SOULX_VERSION_LINE}")
-if(NOT SOULX_VERSION)
-    message(FATAL_ERROR "cannot read SOULX_VERSION_STRING from source/core/soulx_android.h")
+# Single source of truth for the version: the VERSION file (YY.M.PATCH, see scripts/versioning/). Editing it
+# reconfigures the build.
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/VERSION" SOULX_VERSION)
+string(STRIP "${SOULX_VERSION}" SOULX_VERSION)
+if(NOT SOULX_VERSION MATCHES "^[0-9]+\\.[0-9]+\\.[0-9]+$")
+    message(FATAL_ERROR "VERSION must hold one version like 26.10.0 (it holds: '${SOULX_VERSION}')")
 endif()
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/VERSION")
 
 project(SoulXAndroid VERSION ${SOULX_VERSION} LANGUAGES C OBJC)
 
@@ -106,6 +107,7 @@ target_include_directories(soulx_core PUBLIC
 )
 target_compile_options(soulx_core PRIVATE ${SOULX_WARNINGS} ${SOULX_OBJC_OPTIONS})
 target_link_libraries(soulx_core PUBLIC soulx_lua m ${SOULX_FRAMEWORKS})
+target_compile_definitions(soulx_core PUBLIC "SOULX_VERSION_STRING=\"${SOULX_VERSION}\"")
 
 # soulx: the command line tool, which is also the window app ('soulx window NAME')
 add_executable(soulx ${SOULX_SRC}/native/main_macos.c)

@@ -1,7 +1,7 @@
 # Changelog
 
-Each release's section becomes the text of its GitHub Release (see "Packaging and releases" in
-docs/DEVELOPMENT.md). Before tagging, rename "Unreleased" to the version.
+Versions are vYY.M.PATCH (see "Versioning" in README.md). Changes go under "Unreleased"; the scripts in
+scripts/versioning/ turn it into the release's section, which becomes the text of its GitHub Release.
 
 ## Unreleased
 

@@ -53,7 +53,7 @@ SoulX is macOS-only. Windows and Linux are not supported.
 
 ## Install
 
-Download **SoulX-<version>.dmg** from [Releases](https://github.com/t2o0n321/soulx/releases), open it and drag
+Download **SoulX-v<version>.dmg** from [Releases](https://github.com/t2o0n321/soulx/releases), open it and drag
 **SoulX** into **Applications**.
 
 SoulX is not notarized by Apple, so macOS stops the first open. Click **Done** (not "Move to Trash"), open
@@ -82,6 +82,22 @@ soulx play ~/Downloads/game.apk        # play
 
 In the window, the mouse is your finger and right-click is Back. The toolbar has Back, Home, Recents, Rotate, Record
 script, Run script, Screenshot and Keymap. ⌘W stops the instance, and ⌥⌘W closes only the window.
+
+## Versioning
+
+SoulX uses calendar versions, **vYY.M.PATCH**: the year, the month of the release and a patch number.
+
+| version | means |
+|---|---|
+| `v26.10.0` | the first release of October 2026 |
+| `v26.10.1` | a second release (fixes) in the same month |
+| `v26.11.0` | the first release of November 2026 |
+
+The number tells you how recent your copy is, not how many versions came before. The version is kept (without the v) in the
+[`VERSION`](VERSION) file and the changes of each release in [CHANGELOG.md](CHANGELOG.md). Maintainers release
+with `scripts/versioning/bump-version-calendar.sh` (the first release of a month) or
+`scripts/versioning/bump-version-patch.sh` (another one in the same month); see
+[docs/DEVELOPMENT.md](docs/DEVELOPMENT.md#packaging-and-releases).
 
 ## Documentation
 
