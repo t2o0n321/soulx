@@ -1,0 +1,9 @@
+version: Lua 5.4.9 (released 2026-08-10; latest 5.4.x on https://www.lua.org/ftp/ as of 2026-10-12)
+url:     https://www.lua.org/ftp/lua-5.4.9.tar.gz
+size:    373429 bytes
+sha256:  2335b6c582a52654f94612bf10d2f4672805d05329aa6568b1d8cd9e5c6fb8e6
+         (as published on https://www.lua.org/ftp/, verified with `shasum -a 256`)
+files:   src/*.c and src/*.h of the distribution, unmodified, except lua.c and luac.c
+         (the stand-alone interpreter and compiler; Soul embeds the library only).
+build:   C with -DLUA_USE_MACOSX (see CMakeLists.txt); warnings disabled for these files.
+license: MIT, see LICENSE.

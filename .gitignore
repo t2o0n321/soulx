@@ -1,0 +1,24 @@
+# Build output
+build/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# macOS
+.DS_Store
+
+# Logs and temporary files
+*.log
+*.tmp
+*.temp
+
+# Personal/sensitive files
+*.pem
+*.key
+secrets/
+.env
+.env.local
