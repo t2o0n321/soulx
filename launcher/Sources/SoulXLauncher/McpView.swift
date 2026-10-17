@@ -126,9 +126,11 @@ struct McpView: View {
                 ProgressView().controlSize(.small)
             } else if app.state == "connected" {
                 Button(L("Disconnect")) { run(app, connect: false) }
+            } else if app.state == "other" {
+                Button(L("Remove")) { run(app, connect: false) }
+                Button(L("Repair")) { run(app, connect: true) }.buttonStyle(.borderedProminent)
             } else if app.state != "unreadable" {
-                Button(app.state == "other" ? L("Repair") : L("Connect")) { run(app, connect: true) }
-                    .buttonStyle(.borderedProminent)
+                Button(L("Connect")) { run(app, connect: true) }.buttonStyle(.borderedProminent)
             }
         }
     }
@@ -146,7 +148,7 @@ struct McpView: View {
         busyClient = app.id
         Task {
             if let msg = await model.connectClient(app.id, connect: connect) {
-                note = connect ? String(format: L("%@ is connected. Restart it to start using SoulX."), app.name) : nil
+                note = String(format: L(connect ? "%@ is connected. Restart it to start using SoulX." : "SoulX was removed from %@. Restart it to apply."), app.name)
                 _ = msg
             }
             clients = await model.mcpClients()

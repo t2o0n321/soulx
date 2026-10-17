@@ -557,7 +557,8 @@ your scripts and run Lua it writes.
 `soulx mcp config --enable`. Then connect your AI app once:
 
 **The easy way:** in the launcher's AI control page, press **Connect** next to your AI app (the page lists the
-supported AI apps found on this Mac), then restart that app. Or from the terminal:
+supported AI apps found on this Mac), then restart that app. **Disconnect** takes SoulX out of that app's settings
+again; an app still pointing to another copy of SoulX can be repaired or removed. Or from the terminal:
 
 ```bash
 soulx mcp clients            # AI apps found on this Mac and whether they are connected

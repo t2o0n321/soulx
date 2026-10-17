@@ -164,6 +164,8 @@ private let table: [String: (String, String)] = [   // English key: (繁體, 简
     "Connect": ("連接", "连接"),
     "Disconnect": ("中斷連接", "断开连接"),
     "Repair": ("修復", "修复"),
+    "Remove": ("移除", "移除"),
+    "SoulX was removed from %@. Restart it to apply.": ("已從 %@ 移除 SoulX。重新開啟它即可生效。", "已从 %@ 移除 SoulX。重新打开它即可生效。"),
     "Connected": ("已連接", "已连接"),
     "Not connected": ("未連接", "未连接"),
     "Connected to another copy of SoulX": ("連到另一份 SoulX（按修復改成這一份）", "连到另一份 SoulX（按修复改成这一份）"),
