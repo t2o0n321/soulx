@@ -90,7 +90,8 @@ struct InstanceDetailView: View {
     @State private var needsRestart = false
     @State private var confirmDelete = false
     @State private var volume: VolumeInfo?
-    @State private var volumeValue: Double = 50
+    @State private var volumeLevel: Double = 0          // Android's steps (0...max), like the SoulX window's slider
+    @State private var draggingVolume = false
 
     init(instance: Instance) {
         self.instance = instance
@@ -143,7 +144,7 @@ struct InstanceDetailView: View {
         }
         .formStyle(.grouped)
         .onChange(of: instance) { _, new in if edited == instance.settings { edited = new.settings } }
-        .task(id: instance.running) { if instance.running { await loadVolume() } }
+        .task(id: instance.running) { if instance.running { await followVolume() } }
         .confirmationDialog(L("Delete this instance and everything on it (apps and game data)?"),
                             isPresented: $confirmDelete) {
             Button(L("Delete"), role: .destructive) { Task { await model.delete(instance.name) } }
@@ -175,8 +176,12 @@ struct InstanceDetailView: View {
             } else if let v = volume {
                 HStack {
                     Image(systemName: v.muted ? "speaker.slash" : "speaker.wave.2")
-                    Slider(value: $volumeValue, in: 0...100, step: 5) { editing in
-                        if !editing { Task { volume = await model.setVolume(instance.name, percent: Int(volumeValue)) ?? volume } }
+                    Slider(value: $volumeLevel, in: 0...Double(max(1, v.max)), step: 1) { editing in
+                        draggingVolume = editing
+                        if !editing {
+                            let pct = Int((volumeLevel * 100 / Double(max(1, v.max))).rounded())
+                            Task { volume = await model.setVolume(instance.name, percent: pct) ?? volume }
+                        }
                     }
                     Toggle(L("Muted"), isOn: Binding(get: { v.muted }, set: { m in
                         Task { volume = await model.setVolume(instance.name, mute: m) ?? volume }
@@ -189,16 +194,15 @@ struct InstanceDetailView: View {
         }
     }
 
-    // right after a start Android may still be booting and the call fails: keep trying while the page is shown
-    private func loadVolume() async {
-        for _ in 0..<30 {
-            if let v = await model.volume(instance.name) {
+    // The volume can change elsewhere (the SoulX window, a game, Android itself), and right after a start Android may
+    // still be booting: read it every 3 s while the page is shown, except while the user drags the slider.
+    private func followVolume() async {
+        while !Task.isCancelled {
+            if !draggingVolume, let v = await model.volume(instance.name), !draggingVolume {
                 volume = v
-                volumeValue = Double(v.volume)
-                return
+                volumeLevel = Double(v.level)
             }
-            try? await Task.sleep(nanoseconds: 2_000_000_000)
-            if Task.isCancelled { return }
+            try? await Task.sleep(nanoseconds: 3_000_000_000)
         }
     }
 

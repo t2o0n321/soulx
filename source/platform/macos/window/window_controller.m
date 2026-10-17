@@ -386,6 +386,8 @@ static NSString* decode_chunk(NSMutableData* pending) {
     NSButton* _collapseButton;           // sidebar toggle in the window title bar
     NSMutableDictionary<NSString*, NSButton*>* _buttons;
     NSSlider* _volumeSlider;             // output volume control in the sidebar
+    double _volumeTouchedMs;             // when the user last moved the slider (polling waits a moment after)
+    int _volumeTicks;
     NSMutableDictionary<NSString*, NSPopover*>* _flyoutPopovers;   // category ident -> its flyout
     NSMutableDictionary<NSString*, SoulXToolRow*>* _categoryButtons;  // category ident -> its toolbar row
     NSPopover* _flyout;                  // the open category flyout, if any
@@ -1019,6 +1021,15 @@ static NSString* decode_chunk(NSMutableData* pending) {
     if (_finished) return;
     [self updateStatus];
     [self updateNotice];
+    // the volume can change elsewhere (the launcher, a game, Android's own buttons): follow it every 3 s, but
+    // never while the user is dragging the slider or right after
+    if (++_volumeTicks % 3 == 0 && !(NSEvent.pressedMouseButtons & 1) && soulx_now_ms() - _volumeTouchedMs > 2000) {
+        __weak SoulXWindowController* weakVol = self;
+        [_screen readMusicVolumeThen:^(int v) {
+            SoulXWindowController* s = weakVol;
+            if (s && v >= 0 && soulx_now_ms() - s->_volumeTouchedMs > 2000) s->_volumeSlider.integerValue = v;
+        }];
+    }
     if (_job == JOB_RECORD) {
         _buttons[@"record"].title = elapsed_text((soulx_now_ms() - _jobStartMs) / 1000.0);
     }
@@ -1962,6 +1973,7 @@ static const double k_run_speeds[] = { 0.25, 0.5, 0.75, 1.0, 1.5, 2.0, 3.0, 5.0 
 // track the level and send the delta as key events.
 - (void)volumeChanged:(id)sender {
     (void)sender;
+    _volumeTouchedMs = soulx_now_ms();
     [_screen setMusicVolume:(int)_volumeSlider.integerValue];   // absolute + instant; 0 = mute
 }
 

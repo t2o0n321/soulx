@@ -1564,10 +1564,11 @@ static long long file_mtime_ns(const char* rel_name) {
     });
 }
 
-// Reads the current music volume (0..15, or -1 on failure) via `cmd audio get-stream-volume 3`.
+// Reads the current music volume (0..15, or -1 on failure) via `cmd audio get-stream-volume 3`. Runs on the
+// display-poll queue: an adb call on the input queue would hold up taps and keys.
 - (void)readMusicVolumeThen:(void (^)(int v))done {
     __weak SoulXScreenView* weakSelf = self;
-    dispatch_async(_inputQueue, ^{
+    dispatch_async(_pollQueue, ^{
         SoulXScreenView* s = weakSelf;
         int vol = -1;
         if (s && [s inputOpen]) {

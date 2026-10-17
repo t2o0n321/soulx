@@ -90,6 +90,8 @@ public struct StatsSample: Decodable, Sendable {
 public struct VolumeInfo: Decodable, Sendable {
     public let name: String
     public let volume: Int        // percent
+    public let level: Int         // Android's own steps: 0...max
+    public let max: Int
     public let muted: Bool
     public let audio: Bool        // false: the instance has no sound device
 }
