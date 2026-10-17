@@ -72,6 +72,26 @@ int  soulx_write_file_atomic(const char* path, const char* data, size_t len); //
 const char* soulx_ui_language(void);                  // "system" | "en" | "zh-hant" | "zh-hans" ( first)
 int  soulx_set_ui_language(const char* lang);          // saves it in /ui_language; -1 if unknown
 const char* soulx_lang_canonical(const char* s);       // "zh-TW" -> "zh-hant" ...; NULL if unknown
+
+// scripts.c - each instance's Lua scripts (~/Documents/SoulX Scripts/<instance>/, root overridable by $SOULX_SCRIPTS)
+typedef struct {
+    char file[512];              // relative to the instance's folder: "farm.lua" or "pkg/main.lua"
+    char top[256];               // the top-level entry it belongs to ("farm.lua" or "pkg")
+    char path[1024];             // absolute
+    char name[128];              // "-- name:" (empty when none)
+    bool package;                // inside a folder (a script package)
+    long long size;
+    time_t modified;
+} SoulXScript;
+int  soulx_scripts_root(char* out, size_t cap);
+int  soulx_scripts_dir(const char* instance, char* out, size_t cap, bool create);
+int  soulx_scripts_migrate(void);                        // once: root-level scripts -> default/
+int  soulx_scripts_list(const char* instance, SoulXScript* out, int max);   // count (may exceed max), -1 error
+int  soulx_script_name(const char* path, char* out, size_t cap);           // 0 when it has a name
+int  soulx_scripts_import(const char* instance, const char* src, char* dest_out, size_t cap);
+int  soulx_scripts_trash(const char* instance, const char* entry);         // a top-level entry -> ~/.Trash
+int  soulx_scripts_set_name(const char* instance, const char* file, const char* name);
+int  soulx_scripts_find(const char* instance, const char* query, char* out, size_t cap);  // -1 none, -2 ambiguous
 uint64_t soulx_dir_size(const char* path);            // bytes, recursive (best effort)
 uint64_t soulx_free_disk_bytes(const char* path);
 

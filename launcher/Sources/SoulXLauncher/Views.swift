@@ -119,6 +119,7 @@ struct InstanceDetailView: View {
                 }
             }
             if instance.running { volumeSection }
+            ScriptsSection(instance: instance.name)
             SettingsForm(settings: $edited, recommended: Profile.recommended(hostMemoryGB: model.hostMemoryGB),
                          minDataGB: instance.dataGB)
             Section {

@@ -123,6 +123,30 @@ final class AppModel: ObservableObject {
         return running ? L("Saved. The running instance gets the new settings when it restarts.") : L("Saved.")
     }
 
+    // --- scripts (managed here, run from SoulX's window or `soulx run`) ---
+
+    func scripts(_ name: String) async -> ScriptList? {
+        try? await cli?.json(ScriptList.self, ["scripts", "-i", name, "--json"])
+    }
+
+    func importScripts(_ name: String, _ urls: [URL]) async -> ScriptList? {
+        guard let cli, !urls.isEmpty else { return nil }
+        do { return try await cli.json(ScriptList.self, ["scripts", "-i", name, "import"] + urls.map(\.path) + ["--json"]) }
+        catch { alert = error.localizedDescription; return nil }
+    }
+
+    func removeScript(_ name: String, entry: String) async -> ScriptList? {
+        guard let cli else { return nil }
+        do { return try await cli.json(ScriptList.self, ["scripts", "-i", name, "remove", entry, "--json"]) }
+        catch { alert = error.localizedDescription; return nil }
+    }
+
+    func renameScript(_ name: String, file: String, to title: String) async -> ScriptList? {
+        guard let cli else { return nil }
+        do { return try await cli.json(ScriptList.self, ["scripts", "-i", name, "rename", file, title, "--json"]) }
+        catch { alert = error.localizedDescription; return nil }
+    }
+
     func volume(_ name: String) async -> VolumeInfo? {
         try? await cli?.json(VolumeInfo.self, ["volume", "-i", name, "--json"])
     }

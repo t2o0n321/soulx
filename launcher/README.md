@@ -1,11 +1,12 @@
 # SoulX launcher
 
 A small SwiftUI app for managing SoulX instances without the terminal: create, configure, start (with or without a
-window), stop and delete instances, see their CPU and memory use live, set the volume, and install the Android
-runtime on first use.
+window), stop and delete instances, see their CPU and memory use live, set the volume, manage each instance's
+scripts (import, rename, show in Finder, move to the Trash; running them stays in SoulX's window), switch the
+language, and install the Android runtime on first use.
 
 It talks to SoulX only through the `soulx` CLI's JSON output (`list`, `config`, `stats --watch`, `volume`,
-`runtime`, all with `--json`), so it never depends on SoulX's file formats.
+`runtime`, `scripts`, `language`, all with `--json`), so it never depends on SoulX's file formats.
 
 ## Run it from source
 

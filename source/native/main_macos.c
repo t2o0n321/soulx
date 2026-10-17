@@ -2534,6 +2534,21 @@ static int cmd_run(const CliCommand* self, const CliArgs* a, const CliGlobal* g)
         return usage_error(self, "which script? e.g.: soulx run farm.lua");
     }
     const char* script = a->pos[0];
+    // not a file here: a script of the instance, by its name or file name (soulx run "Daily run")
+    char found[PATH_MAX];
+    struct stat sst;
+    if (stat(script, &sst) != 0 && !strchr(script, '/')) {
+        const char* inst = a->instance ? a->instance : g->instance ? g->instance : default_instance_name();
+        SoulXInstanceConf ic;
+        int fr = soulx_resolve_instance(inst, &ic) == 0 ? soulx_scripts_find(ic.name, script, found, sizeof found) : -1;
+        if (fr == 0) {
+            script = found;
+        } else if (fr == -2) {
+            soulx_log(SOULX_LOG_ERROR, "more than one script of '%s' is called '%s': use its file name (soulx scripts -i %s)",
+                      ic.name, script, ic.name);
+            return CLI_EXIT_FAIL;
+        }
+    }
     if (!readable_file(script)) {
         return CLI_EXIT_FAIL;
     }
@@ -3315,6 +3330,98 @@ static int cmd_doctor(const CliCommand* self, const CliArgs* a, const CliGlobal*
     return soulx_doctor() == 0 ? CLI_EXIT_OK : CLI_EXIT_FAIL;
 }
 
+enum { SCRIPTS_JSON };
+static const CliOpt k_scripts_opts[] = {
+    [SCRIPTS_JSON] = { "json", 0, false },
+};
+
+#define SCRIPTS_LIST_MAX 512
+
+static void json_scripts(const char* instance) {
+    static SoulXScript list[SCRIPTS_LIST_MAX];
+    char folder[PATH_MAX] = "";
+    (void)soulx_scripts_dir(instance, folder, sizeof folder, false);
+    int n = soulx_scripts_list(instance, list, SCRIPTS_LIST_MAX);
+    if (n > SCRIPTS_LIST_MAX) n = SCRIPTS_LIST_MAX;
+    printf("{\"instance\": ");
+    json_str(stdout, instance);
+    printf(", \"folder\": ");
+    json_str(stdout, folder);
+    printf(", \"scripts\": [");
+    for (int i = 0; i < n; i++) {
+        const SoulXScript* s = &list[i];
+        printf("%s{\"file\": ", i ? ", " : "");
+        json_str(stdout, s->file);
+        printf(", \"entry\": ");
+        json_str(stdout, s->top);
+        printf(", \"path\": ");
+        json_str(stdout, s->path);
+        printf(", \"name\": ");
+        json_str_or_null(stdout, s->name[0] ? s->name : NULL);
+        printf(", \"package\": %s, \"size\": %lld, \"modified\": %lld}", s->package ? "true" : "false", s->size,
+               (long long)s->modified);
+    }
+    printf("]}\n");
+}
+
+// soulx scripts [-i NAME] [list|folder|import PATH...|remove ENTRY|rename FILE NEW NAME...] [--json]
+static int cmd_scripts(const CliCommand* self, const CliArgs* a, const CliGlobal* g) {
+    const char* instance = a->instance ? a->instance : g->instance ? g->instance : default_instance_name();
+    SoulXInstanceConf conf;
+    if (load_instance(instance, &conf) != 0) {
+        return CLI_EXIT_FAIL;
+    }
+    instance = conf.name;
+    const char* sub = a->npos ? a->pos[0] : "list";
+    bool json = a->val[SCRIPTS_JSON] != NULL;
+    int rc = CLI_EXIT_OK;
+    if (!strcmp(sub, "list")) {
+        if (a->npos > 1) return usage_error(self, "list takes no arguments");
+    } else if (!strcmp(sub, "folder")) {
+        char folder[PATH_MAX];
+        if (soulx_scripts_dir(instance, folder, sizeof folder, true) != 0) return CLI_EXIT_FAIL;
+        printf("%s\n", folder);
+        return CLI_EXIT_OK;
+    } else if (!strcmp(sub, "import")) {
+        if (a->npos < 2) return usage_error(self, "what should I import? e.g.: soulx scripts import farm.lua");
+        for (int i = 1; i < a->npos; i++) {
+            char dest[PATH_MAX];
+            if (soulx_scripts_import(instance, a->pos[i], dest, sizeof dest) != 0) { rc = CLI_EXIT_FAIL; continue; }
+            if (!json) printf("imported %s\n", dest);
+        }
+    } else if (!strcmp(sub, "remove")) {
+        if (a->npos != 2) return usage_error(self, "which entry? e.g.: soulx scripts remove farm.lua");
+        if (soulx_scripts_trash(instance, a->pos[1]) != 0) return CLI_EXIT_FAIL;
+        if (!json) printf("moved %s to the Trash\n", a->pos[1]);
+    } else if (!strcmp(sub, "rename")) {
+        if (a->npos < 3) return usage_error(self, "e.g.: soulx scripts rename farm.lua Daily farm");
+        char name[128] = "";
+        for (int i = 2; i < a->npos; i++) {
+            if (i > 2 && !str_append(name, sizeof name, " ")) break;
+            if (!str_append(name, sizeof name, a->pos[i])) break;
+        }
+        if (soulx_scripts_set_name(instance, a->pos[1], name) != 0) return CLI_EXIT_FAIL;
+        if (!json) printf("%s is now named \"%s\"\n", a->pos[1], name);
+    } else {
+        return usage_error(self, "unknown action '%s' (use list, folder, import, remove or rename)", sub);
+    }
+    if (json) {
+        json_scripts(instance);
+    } else if (!strcmp(sub, "list")) {
+        static SoulXScript list[SCRIPTS_LIST_MAX];
+        char folder[PATH_MAX] = "";
+        (void)soulx_scripts_dir(instance, folder, sizeof folder, false);
+        int n = soulx_scripts_list(instance, list, SCRIPTS_LIST_MAX);
+        if (n > SCRIPTS_LIST_MAX) n = SCRIPTS_LIST_MAX;
+        printf("Scripts of '%s' (%s):\n", instance, folder);
+        if (n <= 0) printf("  (none yet: soulx scripts -i %s import farm.lua)\n", instance);
+        for (int i = 0; i < n; i++) {
+            printf("  %-28s %s\n", list[i].name[0] ? list[i].name : "(no name)", list[i].file);
+        }
+    }
+    return rc;
+}
+
 enum { LANGUAGE_JSON };
 static const CliOpt k_language_opts[] = {
     [LANGUAGE_JSON] = { "json", 0, false },
@@ -3823,6 +3930,24 @@ static const CliCommand k_commands[] = {
       "and your instances. Exits with 1 when something keeps SoulX from running.\n",
       NO_OPTS, CLI_INTERLEAVED, false },
 
+    { "scripts", cmd_scripts, GROUP_AUTOMATION, "scripts [action]", "list or manage an instance's scripts",
+      "soulx scripts [-i NAME] [list|folder|import PATH...|remove ENTRY|rename FILE NEW NAME] [--json]\n"
+      "\n"
+      "Each instance has its own scripts, in ~/Documents/SoulX Scripts/<instance>/: .lua files, or folders\n"
+      "that hold a script with the files it needs (lib/ ...). SoulX's window lists and runs only that\n"
+      "instance's scripts, and 'soulx run NAME' finds them by name.\n"
+      "\n"
+      "  list               the instance's scripts with their names (the default)\n"
+      "  folder             print the folder (created if missing)\n"
+      "  import PATH...     copy .lua files or script folders in (an entry with the same name is\n"
+      "                     replaced; the old one goes to the Trash)\n"
+      "  remove ENTRY       move a script or script folder to the Trash\n"
+      "  rename FILE NAME   set the name a script shows (its \"-- name:\" line)\n"
+      "  --json             print the instance's scripts as JSON (after any change)\n"
+      "\n"
+      "Examples: soulx scripts -i farm import ~/Downloads/daily.lua   soulx scripts rename daily.lua Daily run\n",
+      k_scripts_opts, NOPTS(k_scripts_opts), CLI_INTERLEAVED, true },
+
     { "language", cmd_language, GROUP_TOOLS, "language [lang]", "show or set the language of the window and launcher",
       "soulx language [system|en|zh-hant|zh-hans] [--json]\n"
       "\n"
@@ -3931,6 +4056,7 @@ int main(int argc, char** argv) {
         soulx_set_verbose(true);
     }
     if (soulx_migrate_legacy_home() != 0) return 1;    // Soul's data, once, before anything reads the home
+    (void)soulx_scripts_migrate();                     // once: scripts move into per-instance folders
 
     // global options before the command: -v, -i NAME
     CliGlobal g = { NULL };

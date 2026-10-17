@@ -84,6 +84,7 @@ SoulX for those commands.
 | `SOULX_INSTANCE` | the default instance name for `-i` |
 | `SOULX_VERBOSE=1` | the same as `-v` on every command |
 | `SOULX_LANG=en` | the language of the window and launcher for this run (`en`, `zh-hant`, `zh-hans`), over the saved choice |
+| `SOULX_SCRIPTS` | the root folder of the per-instance scripts folders (default `~/Documents/SoulX Scripts`) |
 | `SOULX_ACCEPT_ANDROID_SDK_LICENSE=1` | accept the Android SDK license without asking (the same as `soulx setup --accept-licenses`) |
 | `SOULX_ENGINE_FEATURES=A,B` | diagnostics: passes `-feature A -feature B` to the engine at start |
 
@@ -254,7 +255,7 @@ and contain no spaces.
 ### Automation
 
 **`soulx run [-i NAME] [--repeat N | --loop] [--speed X] <script.lua> [args...]`** runs a Lua 5.4 script on a running
-instance. Options go before the script name. Words after it reach the script in the global table `args`. Ctrl+C stops
+instance. The script can be a path, or the name of one of the instance's scripts (`soulx run "Daily run"`). Options go before the script name. Words after it reach the script in the global table `args`. Ctrl+C stops
 the script.
 
 | option | meaning |
@@ -262,6 +263,10 @@ the script.
 | `--repeat N` | run the script N times (1–100000); default 1 |
 | `--loop` | run it over and over until you stop it |
 | `--speed X` | playback speed 0.1–10 (default 1): every `sleep()` and replay pause is divided by X |
+
+**`soulx scripts [-i NAME] [list|folder|import PATH...|remove ENTRY|rename FILE NAME] [--json]`** manages the
+instance's scripts (see [Scripts per instance](#scripts-per-instance)). `import` copies .lua files or script
+folders in, `remove` moves an entry to the Trash, `rename` sets the name a script shows (its `-- name:` line).
 
 **`soulx record [-i NAME] <out.lua> [--force]`** records your taps, swipes, long presses, keys and the pauses between
 them as a Lua script. Ctrl+C stops recording. `--force` overwrites an existing file.
@@ -428,7 +433,7 @@ keyboard to Android.
 | 首頁 Home | | Android Home |
 | 多工 Recents | | the recent-apps overview |
 | 旋轉 Rotate | | turns the screen between portrait and landscape (and turns auto-rotate off) |
-| 錄製腳本 Record script | ⌘R | records what you do as a Lua script. Click again to stop, then choose where to save it (`~/Documents/SoulX Scripts` by default). |
+| 錄製腳本 Record script | ⌘R | records what you do as a Lua script. Click again to stop, then choose where to save it (this instance's scripts folder by default). |
 | 執行腳本 Run script | ⌘O | picks a `.lua` script, how many times to run it (or until you stop it) and the speed, then runs it. Click again (or ⌘.) to stop it. |
 | 截圖 Screenshot | ⌘S | saves the screen, upright, as `~/Pictures/SoulX/<instance>-<date>-<time>.png` |
 | 遊戲鍵位 Keymap | ⌘K | edits the [game keymap](#game-keymaps) |
@@ -527,6 +532,17 @@ soulx run --repeat 20 macro.lua         # 20 times in a row
 soulx run --loop --speed 2 macro.lua    # over and over, twice as fast, until Ctrl+C
 ```
 
+### Scripts per instance
+
+Each instance keeps its own scripts in `~/Documents/SoulX Scripts/<instance>/`: .lua files, or folders that hold a
+script together with the files it needs (`lib/` ...). SoulX's window lists, records into and runs only that
+instance's scripts; the launcher shows them on the instance's page, where you can import, rename, show in Finder
+or move them to the Trash (running them is the window's job). Only scripts with a `-- name:` line appear in the
+window's list.
+
+Scripts from before this layout (directly in `~/Documents/SoulX Scripts/`) are moved into `default/` once, the
+first time SoulX runs. `SOULX_SCRIPTS` sets another root folder.
+
 See [SCRIPTING.md](SCRIPTING.md) for the full API and a tutorial, and [examples/scripts/](../examples/scripts/) for
 complete scripts. Scripts written for Soul keep working: the old `soul` table is an alias of `soulx`.
 
@@ -544,7 +560,7 @@ Everything lives in `~/.soulx-android`. Set `SOULX_HOME` to use a different fold
 | `home/` | the `HOME` given to the engine and adb: adb keys, console token, engine preferences |
 | `licenses/`, `downloads/`, `tmp/` | accepted license texts, the download cache, temporary files |
 
-Your own files go to `~/Documents/SoulX Scripts` (recorded scripts), `~/Pictures/SoulX` (screenshots) and
+Your own files go to `~/Documents/SoulX Scripts/<instance>/` (that instance's scripts; see [Scripts per instance](#scripts-per-instance)), `~/Pictures/SoulX` (screenshots) and
 `~/Movies/SoulX` (videos).
 
 **Moving from Soul.** The first time SoulX runs, it moves Soul's `~/.soul-android` to `~/.soulx-android` and renames

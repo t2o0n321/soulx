@@ -1489,10 +1489,13 @@ static NSString* decode_chunk(NSMutableData* pending) {
     for (dispatch_block_t w2 in waiters) w2();
 }
 
+// This instance's own scripts: ~/Documents/SoulX Scripts/<instance>/ (each instance keeps its scripts apart).
 - (NSString*)scriptsFolder {
+    char dir[PATH_MAX];
+    if (soulx_scripts_dir(_conf.name, dir, sizeof(dir), true) == 0) return @(dir);
     NSString* docs = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES).firstObject;
     if (!docs) docs = [NSHomeDirectory() stringByAppendingPathComponent:@"Documents"];
-    return [docs stringByAppendingPathComponent:@"SoulX Scripts"];
+    return [[docs stringByAppendingPathComponent:@"SoulX Scripts"] stringByAppendingPathComponent:@(_conf.name)];
 }
 
 - (void)recordingEnded:(NSString*)tmp status:(int)status {
@@ -1616,7 +1619,7 @@ static const double k_run_speeds[] = { 0.25, 0.5, 0.75, 1.0, 1.5, 2.0, 3.0, 5.0 
     [named writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:NULL];
 }
 
-// Named scripts in ~/Documents/SoulX Scripts (top level + one level of sub-folders, skipping 'lib').
+// Named scripts in this instance's scripts folder (top level + one level of sub-folders, skipping 'lib').
 - (NSArray<NSDictionary*>*)installedNamedScripts {
     NSMutableArray<NSDictionary*>* out = [NSMutableArray array];
     NSFileManager* fm = [NSFileManager defaultManager];
@@ -1842,8 +1845,8 @@ static const double k_run_speeds[] = { 0.25, 0.5, 0.75, 1.0, 1.5, 2.0, 3.0, 5.0 
     [self stopJob];
 }
 
-// Import a script (or a whole script folder, so a multi-file script keeps its lib/ next to it) into the user's
-// "SoulX Scripts" folder, where Run script looks. Importing the folder keeps require("lib.x") working.
+// Import a script (or a whole script folder, so a multi-file script keeps its lib/ next to it) into this instance's
+// scripts folder, where Run script looks. Importing the folder keeps require("lib.x") working.
 - (void)soulxImportScript:(id)sender {
     (void)sender;
     if (_closing) return;

@@ -121,3 +121,22 @@ public struct RuntimeInfo: Decodable, Sendable {
             .reduce(0) { $0 + $1.downloadBytes }
     }
 }
+
+/// `soulx scripts --json`: one instance's scripts.
+public struct ScriptList: Decodable, Sendable {
+    public struct Script: Decodable, Identifiable, Sendable {
+        public var id: String { file }
+        public let file: String           // "farm.lua" or "pkg/main.lua"
+        public let entry: String          // the top-level file or folder it belongs to
+        public let path: String
+        public let name: String?          // its "-- name:" line
+        public let package: Bool
+        public let size: Int64
+        public let modified: Int64
+        /// What to show: its name, else the file name without ".lua".
+        public var title: String { name ?? (file as NSString).lastPathComponent.replacingOccurrences(of: ".lua", with: "") }
+    }
+    public let instance: String
+    public let folder: String
+    public let scripts: [Script]
+}
