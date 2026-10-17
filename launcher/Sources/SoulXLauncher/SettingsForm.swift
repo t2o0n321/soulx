@@ -8,10 +8,16 @@ struct SettingsForm: View {
     var recommended: Profile
     var minDataGB: Int = 4             // existing instances: storage only grows
     var allowOrientation = true
+    var locked = false                 // a running instance: its settings change only when it is stopped
     @AppStorage("showAdvancedSettings") private var showAdvanced = false
 
     var body: some View {
         Section(L("Settings")) {
+            if locked {
+                Label(L("Settings cannot change while the instance runs. Stop it to change them."), systemImage: "lock.fill")
+                    .font(.callout).foregroundStyle(.secondary)
+            }
+            Group {
             Picker(L("Performance"), selection: profileBinding) {
                 ForEach(Profile.allCases) { p in
                     Text(L(p.rawValue) + (p == recommended ? " · " + L("recommended for this Mac") : "")).tag(Optional(p))
@@ -31,6 +37,8 @@ struct SettingsForm: View {
                     Text("\(L("Custom")) \(settings.width)×\(settings.height)").tag(Resolution.custom)
                 }
             }
+            }
+            .disabled(locked)
             Button {
                 withAnimation(.easeInOut(duration: 0.2)) { showAdvanced.toggle() }
             } label: {
@@ -46,6 +54,7 @@ struct SettingsForm: View {
             .buttonStyle(.plain)
         }
         if showAdvanced {
+            Group {
             Section(L("Hardware")) {
                 Picker(L("CPU cores"), selection: $settings.cores) {
                     ForEach(1...8, id: \.self) { Text("\($0)").tag($0) }
@@ -103,6 +112,8 @@ struct SettingsForm: View {
                     Text(L("Off removes the sound device; saves a little CPU."))
                 }
             }
+            }
+            .disabled(locked)
         }
     }
 

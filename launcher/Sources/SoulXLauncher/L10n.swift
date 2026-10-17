@@ -97,6 +97,7 @@ private let table: [String: (String, String)] = [   // English key: (繁體, 简
     "Name": ("名稱", "名称"),
     "Lowercase letters, digits, - and _ (up to 32).": ("小寫字母、數字、- 和 _（最多 32 個）。", "小写字母、数字、- 和 _（最多 32 个）。"),
     "An instance with this name already exists.": ("已經有同名的實例。", "已经有同名的实例。"),
+    "Settings cannot change while the instance runs. Stop it to change them.": ("執行中無法變更設定，停止實例後再修改。", "运行中无法更改设置，停止实例后再修改。"),
     "Saved. The running instance gets the new settings when it restarts.":
         ("已儲存。執行中的實例要重新啟動才會套用。", "已保存。运行中的实例需要重新启动才会应用。"),
     "Saved.": ("已儲存。", "已保存。"),

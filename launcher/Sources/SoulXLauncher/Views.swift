@@ -114,7 +114,6 @@ struct InstanceDetailView: View {
     let instance: Instance
     @State private var edited: InstanceSettings
     @State private var note: String?
-    @State private var needsRestart = false
     @State private var confirmDelete = false
     @State private var volume: VolumeInfo?
     @State private var volumeLevel: Double = 0          // Android's steps (0...max), like the SoulX window's slider
@@ -143,7 +142,8 @@ struct InstanceDetailView: View {
             }
             ScriptsSection(instance: instance.name)
             SettingsForm(settings: $edited, recommended: Profile.recommended(hostMemoryGB: model.hostMemoryGB),
-                         minDataGB: instance.dataGB)
+                         minDataGB: instance.dataGB, locked: instance.running)
+            if !instance.running {
             Section {
                 HStack {
                     if let note { Text(note).font(.callout).foregroundStyle(.secondary) }
@@ -151,25 +151,23 @@ struct InstanceDetailView: View {
                     Button(L("Revert")) { edited = instance.settings; note = nil }
                         .disabled(edited == instance.settings)
                     Button(L("Apply")) {
-                        let wasRunning = instance.running
-                        Task {
-                            note = await model.apply(instance.name, from: instance.settings, to: edited)
-                            needsRestart = wasRunning && note != nil
-                        }
+                        Task { note = await model.apply(instance.name, from: instance.settings, to: edited) }
                     }
                     .keyboardShortcut(.defaultAction)
                     .disabled(edited == instance.settings || busy)
-                    if instance.running && needsRestart {
-                        Button(L("Restart")) { Task { await model.restart(instance.name); note = nil; needsRestart = false } }.disabled(busy)
-                    }
                 }
+            }
             }
         }
         .formStyle(.grouped)
         .navigationTitle(instance.name)
         .navigationSubtitle("\(instance.android ?? L("Android")) · \(instance.running ? L("Running") : L("Stopped"))")
         .toolbar { toolbarActions }
-        .onChange(of: instance) { _, new in if edited == instance.settings { edited = new.settings } }
+        .onChange(of: instance) { _, new in
+            // follow changes made elsewhere; once it runs, unapplied edits are dropped (they could not apply now)
+            if edited == instance.settings || new.running { edited = new.settings }
+            if new.running { note = nil }
+        }
         .task(id: instance.running) { if instance.running { await followVolume() } }
         .confirmationDialog(L("Delete this instance and everything on it (apps and game data)?"),
                             isPresented: $confirmDelete) {
