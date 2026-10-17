@@ -5,6 +5,8 @@ scripts/versioning/ turn it into the release's section, which becomes the text o
 
 ## Unreleased
 
+## v26.10.0 (2026-10-17)
+
 First release of SoulX as a Mac app.
 
 - **SoulX.app**: open it, create an instance and play. The launcher creates, configures, starts (with or without a
