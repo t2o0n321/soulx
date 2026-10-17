@@ -3422,7 +3422,7 @@ static int cmd_scripts(const CliCommand* self, const CliArgs* a, const CliGlobal
     return rc;
 }
 
-enum { MCP_ENABLE, MCP_DISABLE, MCP_INSTANCES, MCP_ALLOW, MCP_DENY, MCP_JSON, MCP_LINES };
+enum { MCP_ENABLE, MCP_DISABLE, MCP_INSTANCES, MCP_ALLOW, MCP_DENY, MCP_JSON, MCP_LINES, MCP_PAGE, MCP_PER_PAGE };
 static const CliOpt k_mcp_opts[] = {
     [MCP_ENABLE]    = { "enable",    0, false },
     [MCP_DISABLE]   = { "disable",   0, false },
@@ -3431,6 +3431,8 @@ static const CliOpt k_mcp_opts[] = {
     [MCP_DENY]      = { "deny",      0, true  },
     [MCP_JSON]      = { "json",      0, false },
     [MCP_LINES]     = { "lines",     'n', true },
+    [MCP_PAGE]      = { "page",      0, true  },
+    [MCP_PER_PAGE]  = { "per-page",  0, true  },
 };
 
 static bool* mcp_perm(SoulXMcpConfig* c, const char* name) {
@@ -3523,48 +3525,72 @@ static int cmd_mcp(const CliCommand* self, const CliArgs* a, const CliGlobal* g)
         return CLI_EXIT_OK;
     }
     if (!strcmp(sub, "log")) {
-        int lines = 50;
+        int lines = 50, page = 0, per_page = 20;
         const char* v = a->val[MCP_LINES];
         if (v && !parse_int(v, 1, 10000, &lines)) return range_error(self, "--lines", v, 1, 10000, "");
-        char path[PATH_MAX];
-        char* data = NULL;
+        if ((v = a->val[MCP_PAGE]) && !parse_int(v, 1, 1000000, &page)) return range_error(self, "--page", v, 1, 1000000, "");
+        if ((v = a->val[MCP_PER_PAGE]) && !parse_int(v, 1, 500, &per_page)) return range_error(self, "--per-page", v, 1, 500, "");
+        // the rotated file (older calls) then the current one
+        char path[PATH_MAX], old[PATH_MAX + 4];
+        if (soulx_path(path, sizeof path, "logs/mcp.log") != 0) return CLI_EXIT_FAIL;
+        snprintf(old, sizeof old, "%s.1", path);
+        char* parts[2] = { NULL, NULL };
         size_t len = 0;
-        if (soulx_path(path, sizeof path, "logs/mcp.log") != 0 || soulx_read_file(path, &data, &len) != 0) {
-            if (a->val[MCP_JSON]) printf("[]\n"); else printf("(no AI control activity yet)\n");
-            return CLI_EXIT_OK;
-        }
-        // the last N lines
-        const char* start = data + len;
-        for (int seen = 0; start > data; ) {
-            if (start[-1] == '\n' && start != data + len && ++seen > lines) break;
-            start--;
-        }
-        if (!a->val[MCP_JSON]) {
-            fputs(start, stdout);
-        } else {
-            printf("[");
-            bool first = true;
+        (void)soulx_read_file(old, &parts[0], &len);
+        (void)soulx_read_file(path, &parts[1], &len);
+        char** rows = NULL;                         // every line, oldest first
+        int n = 0, cap = 0;
+        for (int p = 0; p < 2; p++) {
             char* save = NULL;
-            for (char* line = strtok_r((char*)start, "\n", &save); line; line = strtok_r(NULL, "\n", &save)) {
-                char* f[5] = { 0 };
-                int k = 0;
-                char* tsave = NULL;
-                for (char* t = strtok_r(line, "\t", &tsave); t && k < 5; t = strtok_r(NULL, "\t", &tsave)) f[k++] = t;
-                if (k < 4) continue;
-                printf("%s{\"time\": ", first ? "" : ", ");
-                json_str(stdout, f[0]);
-                printf(", \"ok\": %s, \"tool\": ", !strcmp(f[1], "ok") ? "true" : "false");
-                json_str(stdout, f[2]);
-                printf(", \"instance\": ");
-                json_str(stdout, f[3]);
-                printf(", \"detail\": ");
-                json_str(stdout, f[4] ? f[4] : "");
-                printf("}");
-                first = false;
+            for (char* line = parts[p] ? strtok_r(parts[p], "\n", &save) : NULL; line; line = strtok_r(NULL, "\n", &save)) {
+                if (n == cap) {
+                    cap = cap ? cap * 2 : 256;
+                    char** grown = realloc(rows, (size_t)cap * sizeof *rows);
+                    if (!grown) break;
+                    rows = grown;
+                }
+                rows[n++] = line;
             }
-            printf("]\n");
         }
-        free(data);
+        // --page: newest first, one page of them; otherwise the last N, oldest first
+        int from, count, step;
+        int pages = n ? (n + per_page - 1) / per_page : 1;
+        if (page) {
+            if (page > pages) page = pages;
+            from = n - 1 - (page - 1) * per_page;
+            count = from + 1 < per_page ? from + 1 : per_page;
+            step = -1;
+        } else {
+            count = n < lines ? n : lines;
+            from = n - count;
+            step = 1;
+        }
+        bool json = a->val[MCP_JSON] != NULL;
+        if (json && page) printf("{\"total\": %d, \"page\": %d, \"pages\": %d, \"per_page\": %d, \"entries\": [", n, page, pages, per_page);
+        else if (json) printf("[");
+        else if (n == 0) printf("(no AI control activity yet)\n");
+        for (int i = 0, r = from; i < count; i++, r += step) {
+            if (!json) { printf("%s\n", rows[r]); continue; }
+            char* f[5] = { 0 };
+            int k = 0;
+            char* tsave = NULL;
+            for (char* t = strtok_r(rows[r], "\t", &tsave); t && k < 5; t = strtok_r(NULL, "\t", &tsave)) f[k++] = t;
+            if (k < 4) continue;
+            printf("%s{\"time\": ", i ? ", " : "");
+            json_str(stdout, f[0]);
+            printf(", \"ok\": %s, \"tool\": ", !strcmp(f[1], "ok") ? "true" : "false");
+            json_str(stdout, f[2]);
+            printf(", \"instance\": ");
+            json_str(stdout, f[3]);
+            printf(", \"detail\": ");
+            json_str(stdout, f[4] ? f[4] : "");
+            printf("}");
+        }
+        if (json) printf(page ? "]}\n" : "]\n");
+        if (!json && page && n) printf("(page %d of %d, %d calls)\n", page, pages, n);
+        free(rows);
+        free(parts[0]);
+        free(parts[1]);
         return CLI_EXIT_OK;
     }
     if (!strcmp(sub, "clients")) {
@@ -4163,6 +4189,8 @@ static const CliCommand k_commands[] = {
       "                           lua (code the AI writes; always sandboxed, no access to your files)\n"
       "    --json                 print the settings as JSON\n"
       "  log [-n N] [--json]    the last N tool calls (all of them are logged)\n"
+      "  log --page P [--per-page N] [--json]\n"
+      "                         one page of them, newest first (20 per page)\n"
       "  clients [--json]       AI apps found on this Mac and whether they are connected\n"
       "  connect APP            add SoulX to that app's settings and turn AI control on\n"
       "  disconnect APP         remove SoulX from that app's settings\n"

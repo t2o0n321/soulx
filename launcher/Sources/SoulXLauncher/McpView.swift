@@ -9,7 +9,8 @@ let mcpSelection = "__ai_control__"
 /// and what it did recently. Everything goes through `soulx mcp config` / `soulx mcp log`.
 struct McpView: View {
     @EnvironmentObject var model: AppModel
-    @State private var log: [McpLogEntry] = []
+    @State private var log = McpLogPage.empty
+    @State private var page = 1                     // 1 = the newest; only that page follows new calls
     @State private var copied = false
     @State private var clients: [McpClientApp] = []
     @State private var note: String?
@@ -80,10 +81,10 @@ struct McpView: View {
                     LabeledContent(L("Never")) { Text(L("Create, delete or change instances; setup")).foregroundStyle(.secondary) }
                 }
                 Section(L("Recent activity")) {
-                    if log.isEmpty {
+                    if log.entries.isEmpty {
                         Text(L("No AI activity yet.")).foregroundStyle(.secondary)
                     } else {
-                        ForEach(log.reversed().prefix(30)) { e in
+                        ForEach(log.entries) { e in
                             HStack(alignment: .firstTextBaseline) {
                                 Image(systemName: e.ok ? "checkmark.circle" : "xmark.octagon")
                                     .foregroundStyle(e.ok ? Color.green : Color.orange)
@@ -94,6 +95,7 @@ struct McpView: View {
                             }
                             .font(.caption)
                         }
+                        if log.pages > 1 { pager }
                     }
                 }
             } else {
@@ -105,7 +107,7 @@ struct McpView: View {
         .task {
             await model.loadMcp()
             while !Task.isCancelled {
-                log = await model.mcpLog()
+                if page == 1, let p = await model.mcpLog(page: 1) { log = p }
                 clients = await model.mcpClients()
                 try? await Task.sleep(nanoseconds: 3_000_000_000)
             }
@@ -150,6 +152,26 @@ struct McpView: View {
         case "unreadable": return L("Its settings file is damaged; SoulX does not touch it")
         default: return L("Not connected")
         }
+    }
+
+    private var pager: some View {
+        HStack {
+            Text(String(format: L("Page %d of %d · %d calls"), log.page, log.pages, log.total))
+                .font(.caption).foregroundStyle(.secondary).monospacedDigit()
+            Spacer()
+            Button { go(1) } label: { Image(systemName: "chevron.left.2") }
+                .help(L("Newest")).disabled(log.page <= 1)
+            Button { go(log.page - 1) } label: { Image(systemName: "chevron.left") }
+                .help(L("Newer")).disabled(log.page <= 1)
+            Button { go(log.page + 1) } label: { Image(systemName: "chevron.right") }
+                .help(L("Older")).disabled(log.page >= log.pages)
+        }
+        .buttonStyle(.borderless)
+    }
+
+    private func go(_ p: Int) {
+        page = max(1, min(p, log.pages))
+        Task { if let l = await model.mcpLog(page: page) { log = l } }
     }
 
     private var enabled: Bool { model.mcp?.enabled == true }

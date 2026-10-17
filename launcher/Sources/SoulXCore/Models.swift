@@ -170,6 +170,16 @@ public struct McpLogEntry: Decodable, Identifiable, Sendable {
     public let detail: String
 }
 
+/// One page of the AI activity log, newest first (`soulx mcp log --page P --json`).
+public struct McpLogPage: Decodable, Sendable {
+    public let total: Int
+    public let page: Int
+    public let pages: Int
+    public let entries: [McpLogEntry]
+
+    public static let empty = McpLogPage(total: 0, page: 1, pages: 1, entries: [])
+}
+
 /// One AI app from `soulx mcp clients --json`.
 public struct McpClientApp: Decodable, Identifiable, Sendable {
     public let id: String

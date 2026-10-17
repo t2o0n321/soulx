@@ -177,8 +177,8 @@ final class AppModel: ObservableObject {
         return r.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    func mcpLog() async -> [McpLogEntry] {
-        (try? await cli?.json([McpLogEntry].self, ["mcp", "log", "-n", "50", "--json"])) ?? []
+    func mcpLog(page: Int) async -> McpLogPage? {
+        try? await cli?.json(McpLogPage.self, ["mcp", "log", "--page", String(page), "--per-page", "20", "--json"])
     }
 
     func volume(_ name: String) async -> VolumeInfo? {

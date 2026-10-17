@@ -607,7 +607,7 @@ an app's JSON configuration that is:
 - **Your scripts only.** `run_script` runs only scripts in the instance's own scripts folder, never another file.
 - **Never available:** creating, deleting or changing instances, and installing the runtime.
 - **Audit log.** Every call (tool, instance, arguments, success) goes to `~/.soulx-android/logs/mcp.log`; the
-  launcher shows the recent ones, and `soulx mcp log` prints them.
+  launcher pages through them, and `soulx mcp log` prints them. The log is kept to about 4 MB: past 2 MB it moves to `mcp.log.1`, replacing the previous one.
 - Every tool has a time limit. When the AI app disconnects, background script runs it started are stopped.
 
 ### Commands
@@ -619,6 +619,7 @@ an app's JSON configuration that is:
 | `soulx mcp` | the server (your AI app runs this) |
 | `soulx mcp config [--enable\|--disable] [--instances "*"\|a,b] [--allow P,...] [--deny P,...] [--json]` | settings; permissions `start-stop`, `install`, `scripts`, `lua` |
 | `soulx mcp log [-n N] [--json]` | the last N calls |
+| `soulx mcp log --page P [--per-page N] [--json]` | one page of the calls, newest first (20 per page); the launcher pages through them |
 | `soulx mcp clients [--json]` | AI apps found on this Mac and whether they are connected |
 | `soulx mcp connect APP` / `disconnect APP` | add SoulX to an app's settings (and turn AI control on), or remove it |
 | `soulx mcp setup` | how to connect an AI app by hand |

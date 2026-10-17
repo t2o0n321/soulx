@@ -68,6 +68,19 @@ struct ModelsTests {
 }
 
 struct SettingsTests {
+    // `soulx mcp log --page 3 --per-page 3 --json` (newest first; the last page may be short)
+    @Test func testDecodeMcpLogPage() throws {
+        let json = """
+            {"total": 47, "page": 3, "pages": 16, "per_page": 3, "entries": [
+            {"time": "2026-10-17 11:00:15", "ok": false, "tool": "tap", "instance": "beta", "detail": "new 41"},
+            {"time": "2026-10-17 11:00:14", "ok": true, "tool": "tap", "instance": "-", "detail": ""}]}
+            """
+        let p = try JSONDecoder().decode(McpLogPage.self, from: Data(json.utf8))
+        #expect(p.total == 47 && p.page == 3 && p.pages == 16)
+        #expect(p.entries.count == 2 && !p.entries[0].ok && p.entries[1].instance == "-")
+        #expect(McpLogPage.empty.entries.isEmpty && McpLogPage.empty.pages == 1)
+    }
+
     @Test func testCreateArguments() {
         var s = InstanceSettings.defaults(profile: .lite)
         s.landscape = true
