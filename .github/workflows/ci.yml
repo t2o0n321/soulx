@@ -37,6 +37,14 @@ jobs:
           ./build/macos/soulx help > /dev/null
           SOULX_HOME="$RUNNER_TEMP/soulx-home" ./build/macos/soulx list --json
 
+      - name: Package SoulX.app
+        if: matrix.build == 'release'
+        run: |
+          (cd launcher && swift build -c release --arch arm64)
+          ./scripts/package_macos.sh --skip-build --no-dmg
+          codesign --verify --strict --deep build/dist/SoulX.app
+          build/dist/SoulX.app/Contents/Helpers/soulx version
+
       - name: Upload test logs on failure
         if: failure()
         uses: actions/upload-artifact@v7

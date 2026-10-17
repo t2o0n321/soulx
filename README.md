@@ -44,14 +44,32 @@ soulx run farm.lua                 # let a Lua script play
 | | |
 |---|---|
 | Mac | Apple Silicon (M1 or later). Intel Macs are not supported. |
-| macOS | 12 or later |
+| macOS | 14 or later for SoulX.app; 12 or later for the `soulx` command built from source |
 | Memory | 8 GB minimum, 16 GB recommended (each running instance gives Android 4 GB or more) |
 | Disk | about 5 GB for the runtime, plus about 6 GB per instance |
 | Network | once, for `soulx setup` (about 2.7 GB from dl.google.com) |
 
 SoulX is macOS-only. Windows and Linux are not supported.
 
-## Quick start
+## Install
+
+Download **SoulX-<version>.dmg** from [Releases](https://github.com/t2o0n321/soulx/releases), open it and drag
+**SoulX** into **Applications**.
+
+SoulX is not notarized by Apple, so macOS stops the first open. Click **Done** (not "Move to Trash"), open
+**System Settings > Privacy & Security**, scroll to "SoulX was blocked…", click **Open Anyway** and confirm. You do
+this once. Then SoulX downloads its Android 17 runtime on first use.
+
+Open SoulX from Applications rather than from Downloads or the disk image: macOS runs apps from there at a temporary
+location, which AI apps connected to SoulX could not find later.
+
+The `soulx` command is inside the app. To use it in Terminal:
+
+```bash
+sudo ln -sf /Applications/SoulX.app/Contents/Helpers/soulx /usr/local/bin/soulx
+```
+
+## Build from source
 
 ```bash
 ./scripts/build_macos.sh               # builds build/macos/soulx (see docs/DEVELOPMENT.md)

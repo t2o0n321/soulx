@@ -29,11 +29,16 @@ struct McpView: View {
                 }
                 Section {
                     let found = clients.filter(\.installed)
+                    let temporary = c.command.contains("/AppTranslocation/") || c.command.hasPrefix("/Volumes/")
+                    if temporary {
+                        Label(L("Move SoulX to your Applications folder first, then open it from there. Running from Downloads or the disk image, macOS gives it a temporary location that AI apps could not find later."),
+                              systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                    }
                     if found.isEmpty {
                         Text(L("No supported AI app was found on this Mac. Install one (for example an AI desktop app or code editor with MCP support), or set it up by hand below."))
                             .foregroundStyle(.secondary)
                     }
-                    ForEach(found) { app in clientRow(app) }
+                    ForEach(found) { app in clientRow(app) }.disabled(temporary)
                     if let note {
                         Label(note, systemImage: "arrow.clockwise.circle").foregroundStyle(.blue)
                     }

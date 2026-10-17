@@ -1,0 +1,17 @@
+# Changelog
+
+Each release's section becomes the text of its GitHub Release (see "Packaging and releases" in
+docs/DEVELOPMENT.md). Before tagging, rename "Unreleased" to the version.
+
+## Unreleased
+
+First release of SoulX as a Mac app.
+
+- **SoulX.app**: open it, create an instance and play. The launcher creates, configures, starts (with or without a
+  window), stops and deletes instances, shows their CPU and memory use, sets the volume, manages each instance's
+  scripts and installs the Android 17 runtime on first use. English, Traditional and Simplified Chinese.
+- **SoulX's window**: Android on the Mac's GPU, toolbar, game keymap, script recording and running, screenshots.
+- **Lua automation**: taps, swipes, OCR, image matching and colours; scripts kept per instance.
+- **AI control (MCP)**, off by default: let an AI app look at the screen and play, connected with one click from the
+  launcher; per-instance and per-action permissions, sandboxed Lua and an audit log. Local only: no network port.
+- Settings per instance: performance profile, orientation, resolution, frame rate cap, audio.

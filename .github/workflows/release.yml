@@ -1,0 +1,77 @@
+name: Release
+
+# Pushing a tag vX.Y.Z (matching SOULX_VERSION_STRING in source/core/soulx_android.h) tests, packages and publishes
+# SoulX.app as a GitHub Release. Run it by hand (Actions > Release > Run workflow) to only build the .dmg as an
+# artifact, without publishing anything.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Package SoulX.app (macOS arm64)
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0          # the build number is the commit count
+
+      - name: Version
+        id: version
+        run: |
+          version="$(sed -n 's/^#define SOULX_VERSION_STRING "\(.*\)"$/\1/p' source/core/soulx_android.h)"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if [[ "$GITHUB_REF_TYPE" == tag && "$GITHUB_REF_NAME" != "v$version" ]]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match SOULX_VERSION_STRING $version"
+            exit 1
+          fi
+
+      - name: Build and run the unit tests
+        run: ./scripts/build_macos.sh --test
+
+      - name: Launcher tests
+        working-directory: launcher
+        run: swift test
+
+      - name: Package
+        run: ./scripts/package_macos.sh --skip-build
+
+      - name: Check the app
+        run: |
+          app=build/dist/SoulX.app
+          codesign --verify --strict --deep "$app"
+          "$app/Contents/Helpers/soulx" version
+          SOULX_HOME="$RUNNER_TEMP/soulx-home" "$app/Contents/Helpers/soulx" list --json
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist")" \
+               = "${{ steps.version.outputs.version }}"
+
+      - name: Upload the build
+        uses: actions/upload-artifact@v7
+        with:
+          name: SoulX-${{ steps.version.outputs.version }}
+          path: |
+            build/dist/SoulX-*.dmg
+            build/dist/SoulX-*.zip
+            build/dist/SoulX-*.sha256
+          retention-days: 14
+
+      - name: Publish the GitHub Release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          v="${{ steps.version.outputs.version }}"
+          ./scripts/release_notes.sh "$v" > "$RUNNER_TEMP/notes.md"
+          gh release create "$GITHUB_REF_NAME" \
+            --title "SoulX $v" \
+            --notes-file "$RUNNER_TEMP/notes.md" \
+            --verify-tag \
+            build/dist/SoulX-"$v".dmg build/dist/SoulX-"$v".zip build/dist/SoulX-"$v".sha256

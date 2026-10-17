@@ -35,7 +35,7 @@ public final class SoulXCLI: @unchecked Sendable {
 
     public init(executable: URL) { self.executable = executable }
 
-    /// Where the CLI is: $SOULX_CLI, next to the launcher in the app bundle, the repo's build output (development),
+    /// Where the CLI is: $SOULX_CLI, inside SoulX.app (Contents/Helpers), the repo's build output (development),
     /// then the usual install locations.
     public static func locate(environment: [String: String] = ProcessInfo.processInfo.environment,
                               bundle: Bundle = .main,
@@ -43,6 +43,8 @@ public final class SoulXCLI: @unchecked Sendable {
                               sourceFile: String = #filePath) -> SoulXCLI? {
         var candidates: [URL] = []
         if let p = environment["SOULX_CLI"], !p.isEmpty { candidates.append(URL(fileURLWithPath: p)) }
+        // SoulX.app: Contents/Helpers/soulx (Contents/MacOS/ already holds "SoulX", the same name on a case-insensitive disk)
+        candidates.append(bundle.bundleURL.appendingPathComponent("Contents/Helpers/soulx"))
         if let r = bundle.resourceURL { candidates.append(r.appendingPathComponent("soulx")) }
         // development: the launcher runs from somewhere under launcher/.build/ (the layout differs between SwiftPM
         // versions: .build/debug/, .build/arm64-apple-macosx/debug/, .build/out/Products/Debug/ ...): walk up

@@ -54,6 +54,30 @@ Tools instead:
 DEVELOPER_DIR=/Library/Developer/CommandLineTools ./scripts/build_macos.sh --test
 ```
 
+## Packaging and releases
+
+```bash
+./scripts/package_macos.sh             # build/dist/SoulX.app, SoulX-<version>.dmg, .zip and .sha256
+./scripts/package_macos.sh --skip-build --no-dmg
+```
+
+`SoulX.app` holds the launcher (`Contents/MacOS/SoulX`), the CLI (`Contents/Helpers/soulx`, which also runs SoulX's
+window and the MCP server) and the icon (drawn by `scripts/make_icon.swift`, the same drawing as `SoulXAppIcon()` in
+the window). Its version comes from `SOULX_VERSION_STRING`; the build number is the commit count. The app is signed
+ad hoc only: it is deliberately not signed with a Developer ID nor notarized, so people allow it once in
+System Settings > Privacy & Security.
+
+Releases are published by `.github/workflows/release.yml`:
+
+1. Set `SOULX_VERSION_STRING` in `source/core/soulx_android.h` and add a `## X.Y.Z` section to `CHANGELOG.md`.
+2. Commit, then `git tag vX.Y.Z && git push origin vX.Y.Z`.
+3. The workflow checks that the tag matches the version, runs every test, packages the app and creates the GitHub
+   Release with the .dmg, .zip and checksums. Its text is the CHANGELOG section plus the install steps
+   (`scripts/release_notes.sh`).
+
+Running the workflow by hand (Actions > Release > Run workflow) builds the .dmg as an artifact without publishing.
+CI also packages the app on every push, so a broken package shows up before a release.
+
 ## Tests
 
 `tests/macos/test_*.c` are standalone unit tests, one executable each. They need no emulator, network or runtime:
@@ -81,6 +105,7 @@ Run one test with `ctest -R registry --output-on-failure` in `build/macos`.
 ```
 CMakeLists.txt              macOS-only build; target `soulx`, test target `soulx_tests`
 scripts/build_macos.sh      build script
+scripts/package_macos.sh    SoulX.app, .dmg and .zip (make_icon.swift draws the icon, release_notes.sh the release text)
 source/
   core/soulx_android.h      public C API (instances, apps, input, screen) and the version
   native/main_macos.c       the `soulx` CLI: argument parsing, help texts, every command

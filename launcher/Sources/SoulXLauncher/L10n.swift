@@ -165,6 +165,7 @@ private let table: [String: (String, String)] = [   // English key: (繁體, 简
     "Disconnect": ("中斷連接", "断开连接"),
     "Repair": ("修復", "修复"),
     "Remove": ("移除", "移除"),
+    "Move SoulX to your Applications folder first, then open it from there. Running from Downloads or the disk image, macOS gives it a temporary location that AI apps could not find later.": ("請先把 SoulX 移到「應用程式」資料夾，再從那裡打開。從「下載項目」或磁碟映像檔執行時，macOS 會給它一個暫時的位置，AI 應用程式之後會找不到。", "请先把 SoulX 移到“应用程序”文件夹，再从那里打开。从“下载”或磁盘映像运行时，macOS 会给它一个临时位置，AI 应用之后会找不到。"),
     "SoulX was removed from %@. Restart it to apply.": ("已從 %@ 移除 SoulX。重新開啟它即可生效。", "已从 %@ 移除 SoulX。重新打开它即可生效。"),
     "Connected": ("已連接", "已连接"),
     "Not connected": ("未連接", "未连接"),
