@@ -31,6 +31,8 @@ Requires a Mac with Apple Silicon (M1 or later) and macOS 14 or later.
    "SoulX was blocked…" and click **Open Anyway**, then confirm. You do this once.
 3. SoulX downloads its Android 17 runtime on first use (about 2.7 GB).
 
+Already have SoulX v26.10.1 or later? It updates itself: **Update to v${version}** in its sidebar.
+
 ## 安裝
 
 需要 Apple Silicon（M1 或更新）的 Mac，macOS 14 以上。
@@ -39,6 +41,8 @@ Requires a Mac with Apple Silicon (M1 or later) and macOS 14 or later.
 2. 從「應用程式」打開 SoulX。SoulX 沒有經過 Apple 公證，第一次打開會被 macOS 擋下：按「完成」（不要按「丟到垃圾桶」），
    到「系統設定 > 隱私權與安全性」，往下找到「已阻擋 SoulX…」，按「強制打開」並確認。只需要做一次。
 3. 第一次使用時 SoulX 會下載 Android 17 執行環境（約 2.7 GB）。
+
+已經裝了 SoulX v26.10.1 以後的版本？它會自己更新：側邊欄的「更新到 v${version}」。
 
 Checksums: \`SoulX-v$version.sha256\`.
 EOF

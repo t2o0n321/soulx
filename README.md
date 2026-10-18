@@ -39,6 +39,9 @@ soulx run farm.lua                 # let a Lua script play
 - **AI control (MCP), off by default.** Let an AI app (any MCP client) look at the screen and play, with per-instance
   and per-action permissions, sandboxed Lua and an audit log. Local only: no network port.
 - **Installs games in any common format:** `.apk`, `.xapk` (with OBB data), `.apks`, `.apkm` and folders of split APKs.
+- **Updates itself.** SoulX.app looks for a new release when it opens and offers it in its sidebar. One click
+  downloads it, checks its SHA-256 and signature, replaces the app and reopens it; it can also update by itself the
+  next time it opens.
 
 ## Requirements
 
@@ -48,7 +51,7 @@ soulx run farm.lua                 # let a Lua script play
 | macOS | 14 or later for SoulX.app; 12 or later for the `soulx` command built from source |
 | Memory | 8 GB minimum, 16 GB recommended (each running instance gives Android 4 GB or more) |
 | Disk | about 5 GB for the runtime, plus about 6 GB per instance |
-| Network | once, for `soulx setup` (about 2.7 GB from dl.google.com) |
+| Network | once, for `soulx setup` (about 2.7 GB from dl.google.com); SoulX.app also asks GitHub for the latest release |
 
 SoulX is macOS-only. Windows and Linux are not supported.
 
@@ -63,6 +66,9 @@ this once. Then SoulX downloads its Android 17 runtime on first use.
 
 Open SoulX from Applications rather than from Downloads or the disk image: macOS runs apps from there at a temporary
 location, which AI apps connected to SoulX could not find later.
+
+From v26.10.1 on, SoulX updates itself: when a new version is out it shows **Update to v…** in its sidebar (see
+[Updating SoulX](docs/USAGE.md#updating-soulx)). Older versions cannot: install v26.10.1 from its .dmg once.
 
 The `soulx` command is inside the app. To use it in Terminal:
 

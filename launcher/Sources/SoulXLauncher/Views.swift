@@ -3,6 +3,7 @@ import SoulXCore
 
 struct ContentView: View {
     @EnvironmentObject var model: AppModel
+    @EnvironmentObject var updates: UpdateModel
     @State private var creating = false
 
     var body: some View {
@@ -33,24 +34,28 @@ struct ContentView: View {
                 }
             }
             .safeAreaInset(edge: .bottom) {
-                HStack {
-                    if let host = model.host {
-                        Label("\(host.cpus) \(L("cores")) · \(host.memoryMB / 1024) GB", systemImage: "desktopcomputer")
-                            .font(.caption).foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                    Menu {
-                        Picker(L("Language"), selection: Binding(get: { model.language },
-                                                                 set: { c in Task { await model.setLanguage(c) } })) {
-                            ForEach(LanguageChoice.allCases) { Text($0.label).tag($0) }
+                VStack(spacing: 10) {
+                    UpdateBanner()
+                    HStack {
+                        if let host = model.host {
+                            Label("\(host.cpus) \(L("cores")) · \(host.memoryMB / 1024) GB", systemImage: "desktopcomputer")
+                                .font(.caption).foregroundStyle(.secondary)
                         }
-                        .pickerStyle(.inline)
-                    } label: { Image(systemName: "globe") }
-                    .menuStyle(.borderlessButton)
-                    .menuIndicator(.hidden)
-                    .fixedSize()
-                    .help(L("Language"))
-                    .disabled(model.cli == nil)
+                        Spacer()
+                        UpdateMenu()
+                        Menu {
+                            Picker(L("Language"), selection: Binding(get: { model.language },
+                                                                     set: { c in Task { await model.setLanguage(c) } })) {
+                                ForEach(LanguageChoice.allCases) { Text($0.label).tag($0) }
+                            }
+                            .pickerStyle(.inline)
+                        } label: { Image(systemName: "globe") }
+                        .menuStyle(.borderlessButton)
+                        .menuIndicator(.hidden)
+                        .fixedSize()
+                        .help(L("Language"))
+                        .disabled(model.cli == nil)
+                    }
                 }
                 .padding(.horizontal, 18).padding(.vertical, 12)
             }
@@ -65,10 +70,11 @@ struct ContentView: View {
             detail
         }
         .sheet(isPresented: $creating) { CreateInstanceView(isPresented: $creating) }
+        .sheet(isPresented: $updates.showSheet) { UpdateSheet().interactiveDismissDisabled(updates.busy) }
         .alert(L("Error"), isPresented: Binding(get: { model.alert != nil }, set: { if !$0 { model.alert = nil } })) {
             Button(L("OK")) { model.alert = nil }
         } message: { Text(model.alert ?? "") }
-        .task { await model.loadLanguage(); await model.loadMcp(); model.startPolling() }
+        .task { await model.loadLanguage(); await model.loadMcp(); model.startPolling(); updates.start() }
         .id(model.language)                         // redraw every text in the new language
     }
 

@@ -4,12 +4,14 @@ import AppKit
 @main
 struct SoulXLauncherApp: App {
     @StateObject private var model = AppModel()
+    @StateObject private var updates = UpdateModel()
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
 
     var body: some Scene {
         WindowGroup("SoulX") {
             ContentView()
                 .environmentObject(model)
+                .environmentObject(updates)
                 .frame(minWidth: 760, minHeight: 520)
                 .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in
                     model.shutdown()

@@ -225,6 +225,38 @@ private let table: [String: (String, String)] = [   // English key: (繁體, 简
     "Disables preinstalled Google apps games never use; about 600 MB less memory.": ("停用遊戲用不到的預裝 Google app，約省 600 MB 記憶體。", "停用游戏用不到的预装 Google 应用，约省 600 MB 内存。"),
     "Off removes the sound device; saves a little CPU.": ("關閉會移除音訊裝置，可省一點 CPU。", "关闭会移除音频设备，可省一点 CPU。"),
     "Same as the Mac": ("跟隨 Mac", "跟随 Mac"),
+    "Updates": ("更新", "更新"),
+    "Check for updates": ("檢查更新", "检查更新"),
+    "Checking for updates…": ("正在檢查更新…", "正在检查更新…"),
+    "SoulX is up to date (%@).": ("SoulX 已是最新版本（%@）。", "SoulX 已是最新版本（%@）。"),
+    "SoulX %@ is available": ("SoulX %@ 可以更新了", "SoulX %@ 可以更新了"),
+    "You have %@.": ("你目前使用的是 %@。", "你目前使用的是 %@。"),
+    "What's new": ("更新內容", "更新内容"),
+    "Update to %@": ("更新到 %@", "更新到 %@"),
+    "Update now": ("立即更新", "立即更新"),
+    "Later": ("稍後", "稍后"),
+    "View on GitHub": ("在 GitHub 查看", "在 GitHub 查看"),
+    "Download it from GitHub": ("到 GitHub 手動下載", "到 GitHub 手动下载"),
+    "Update automatically the next time SoulX opens": ("下次開啟時自動更新", "下次打开时自动更新"),
+    "SoulX reopens after the update. Running instances keep running; restart them to use the new version.":
+        ("更新完 SoulX 會自動重新開啟。執行中的實例會繼續執行，重新啟動實例後才會用到新版本。",
+         "更新完 SoulX 会自动重新打开。运行中的实例会继续运行，重新启动实例后才会用到新版本。"),
+    "Downloading… %d%%": ("下載中… %d%%", "下载中… %d%%"),
+    "Reopening SoulX…": ("正在重新開啟 SoulX…", "正在重新打开 SoulX…"),
+    "Development build: no update checks.": ("開發版本：不檢查更新。", "开发版本：不检查更新。"),
+    "Could not check for updates: %@": ("無法檢查更新：%@", "无法检查更新：%@"),
+    "The update failed: %@": ("更新失敗：%@", "更新失败：%@"),
+    "SoulX was updated but could not reopen: %@": ("SoulX 已經更新，但沒辦法自動重新開啟：%@", "SoulX 已经更新，但没办法自动重新打开：%@"),
+    "Network problem (%@).": ("網路有問題（%@）。", "网络有问题（%@）。"),
+    "Updates work in SoulX.app only.": ("只有 SoulX.app 能自動更新。", "只有 SoulX.app 能自动更新。"),
+    "Move SoulX to your Applications folder first, then open it from there.":
+        ("請先把 SoulX 移到「應用程式」資料夾，再從那裡打開。", "请先把 SoulX 移到“应用程序”文件夹，再从那里打开。"),
+    "SoulX may not replace itself in %@. Download the new version from GitHub instead.":
+        ("SoulX 沒有權限替換 %@ 裡的自己，請到 GitHub 下載新版本。", "SoulX 没有权限替换 %@ 里的自己，请到 GitHub 下载新版本。"),
+    "The download is damaged; nothing was changed.": ("下載的檔案損壞，SoulX 沒有任何改變。", "下载的文件损坏，SoulX 没有任何改变。"),
+    "The download is not a valid SoulX; nothing was changed.":
+        ("下載的不是有效的 SoulX，SoulX 沒有任何改變。", "下载的不是有效的 SoulX，SoulX 没有任何改变。"),
+    "SoulX could not be replaced (%@).": ("沒辦法替換 SoulX（%@）。", "没办法替换 SoulX（%@）。"),
 ]
 
 // keys that are identifiers rather than English text

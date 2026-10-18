@@ -5,6 +5,11 @@ scripts/versioning/ turn it into the release's section, which becomes the text o
 
 ## Unreleased
 
+- **Updates**: SoulX.app looks for a new release on GitHub when it opens (and every 6 hours) and offers it, with what
+  changed, in its sidebar. **Update now** downloads it, checks its SHA-256, identifier, version and signature,
+  replaces the app and reopens it; nothing changes if a check fails. **Update automatically the next time SoulX
+  opens** installs new versions at start. Versions before this one cannot update themselves: install it from the
+  .dmg once.
 - Scripts: `read_text` (OCR) reads Traditional and Simplified Chinese as documented; it recognised English only.
 
 ## v26.10.0 (2026-10-17)

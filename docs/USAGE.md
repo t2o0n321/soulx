@@ -15,6 +15,7 @@ SoulX from source see [DEVELOPMENT.md](DEVELOPMENT.md).
 - [Game keymaps](#game-keymaps)
 - [Automation (Lua)](#automation-lua)
 - [AI control (MCP)](#ai-control-mcp)
+- [Updating SoulX](#updating-soulx)
 - [Where SoulX keeps its data](#where-soulx-keeps-its-data)
 - [Performance](#performance)
 - [Troubleshooting](#troubleshooting)
@@ -626,6 +627,31 @@ an app's JSON configuration that is:
 | `soulx mcp clients [--json]` | AI apps found on this Mac and whether they are connected |
 | `soulx mcp connect APP` / `disconnect APP` | add SoulX to an app's settings (and turn AI control on), or remove it |
 | `soulx mcp setup` | how to connect an AI app by hand |
+
+## Updating SoulX
+
+SoulX.app looks for a new release on GitHub when it opens, and every 6 hours while it stays open. That is one request
+to `api.github.com`; nothing about you or your instances is sent. When a newer version is out, SoulX shows what changed
+and an **Update to v…** button at the bottom of the sidebar.
+
+**Update now** downloads `SoulX-v<version>.zip` from the release and checks it before it changes anything:
+
+- its SHA-256 against the release's (GitHub's digest and `SoulX-v<version>.sha256`);
+- that the app inside is SoulX (the same bundle identifier) at the release's version;
+- its signature (`codesign --verify --strict --deep`, as the release workflow checks every build).
+
+Then SoulX swaps the new app in with one rename, quits and opens the new version, which needs no **Open Anyway**. If a
+check fails, nothing changes. Running instances keep running; restart them to use the new version.
+
+**Update automatically the next time SoulX opens** (in the update sheet, and in the sidebar's update menu next to the
+language menu) installs a new version as soon as SoulX opens, without asking. **Check for updates** in that menu
+looks right away.
+
+SoulX can only replace itself where it may write, for example in Applications on an administrator account. Run from
+the disk image or from Downloads (a temporary location), or without permission to write there, it asks you to
+download the new version from [Releases](https://github.com/t2o0n321/soulx/releases) instead. Versions before
+v26.10.1 cannot update themselves: install v26.10.1 from its .dmg once. The `soulx` command does not check for
+updates.
 
 ## Where SoulX keeps its data
 
