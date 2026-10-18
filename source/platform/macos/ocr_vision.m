@@ -38,6 +38,8 @@ int soulx_ocr_text(const SoulXImage* img, char* out, size_t cap, bool numbers) {
         VNRecognizeTextRequest* req = [[VNRecognizeTextRequest alloc] initWithCompletionHandler:nil];
         req.recognitionLevel = VNRequestTextRecognitionLevelAccurate;
         req.usesLanguageCorrection = numbers ? NO : YES;
+        // Vision recognises only English unless told otherwise; many games are in Chinese. Digits read the same.
+        if (!numbers) req.recognitionLanguages = @[ @"zh-Hant", @"zh-Hans", @"en-US" ];
 
         VNImageRequestHandler* handler = [[VNImageRequestHandler alloc] initWithCGImage:cg options:@{}];
         NSError* err = nil;

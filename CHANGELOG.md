@@ -5,6 +5,8 @@ scripts/versioning/ turn it into the release's section, which becomes the text o
 
 ## Unreleased
 
+- Scripts: `read_text` (OCR) reads Traditional and Simplified Chinese as documented; it recognised English only.
+
 ## v26.10.0 (2026-10-17)
 
 First release of SoulX as a Mac app.
