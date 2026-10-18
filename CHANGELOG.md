@@ -5,6 +5,8 @@ scripts/versioning/ turn it into the release's section, which becomes the text o
 
 ## Unreleased
 
+## v26.10.2 (2026-10-18)
+
 - Scripts: `load_image` opens relative paths from the script's folder, like templates, `screenshot`, `img:save` and
   `install` do. It used the working folder, so scripts started from SoulX.app could not load their own images (the
   command line worked when run from the script's folder). Under AI control it is now limited to the scripts folder
