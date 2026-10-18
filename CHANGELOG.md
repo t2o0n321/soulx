@@ -5,6 +5,8 @@ scripts/versioning/ turn it into the release's section, which becomes the text o
 
 ## Unreleased
 
+## v26.10.1 (2026-10-18)
+
 - **Updates**: SoulX.app looks for a new release on GitHub when it opens (and every 6 hours) and offers it, with what
   changed, in its sidebar. **Update now** downloads it, checks its SHA-256, identifier, version and signature,
   replaces the app and reopens it; nothing changes if a check fails. **Update automatically the next time SoulX
