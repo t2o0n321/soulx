@@ -133,7 +133,7 @@ soulx run [-i NAME] [--repeat N | --loop] [--speed X] script.lua [args...]
 - **Instance**: the script controls the instance given with `-i NAME` (default: the
   `SOULX_INSTANCE` environment variable, else `default`). It must be running (`soulx start`).
   `use("other")` switches to another running instance from inside the script.
-- **Script folder**: relative paths given to SoulX's functions (templates, `screenshot`,
+- **Script folder**: relative paths given to SoulX's functions (templates, `load_image`, `screenshot`,
   `img:save`, `install`) are relative to the folder that contains the script, wherever you run
   `soulx` from. SoulX never changes the working directory, so Lua's own `io.open`, `dofile` and
   `loadfile` still resolve relative paths against the current directory. `require("helpers")`
@@ -423,7 +423,8 @@ to save parts of it as templates.
 
 #### `load_image(path)` → Image
 Loads a PNG or JPEG file as an [Image](#image-objects) — a reference picture, a template, or a saved screenshot to
-test recognition on. Use `img:color` / `img:find` / `img:crop` on it exactly like a `capture()`.
+test recognition on. `path` is relative to the script folder (or absolute). Use `img:color` / `img:find` / `img:crop`
+on it exactly like a `capture()`.
 
 #### `find(image [, opts])` → `x, y, score` or `nil`
 Looks for `image` on the screen. Returns the centre of the best match and its score (0–1,

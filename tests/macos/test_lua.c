@@ -11,7 +11,8 @@
  * (100 ms reuse, dropped after input, capture() always fresh), template matching with files
  * relative to the script folder (find/find_all/exists/tap(image), option validation, regions,
  * reload of a changed file), wait()/wait_gone() pacing and timeouts, Image methods
- * (size/color/crop/save/find/find_all/tostring/<close>), screenshot(), console/shell/launch/
+ * (size/color/crop/save/find/find_all/tostring/<close>), load_image() relative to the script folder whatever the
+ * working folder is, screenshot(), console/shell/launch/
  * stop_app/install/current_app/use with fake replies, Ctrl+C (count hook, sleep, wait, pcall and
  * coroutines cannot swallow it) and touch release, disabled host commands, require() next to the
  * script, log/print output, the real device layer refusing an unknown instance, and that dropped
@@ -1502,6 +1503,24 @@ static void test_ocr(void) {
 
 // Multi-scale matching: the `scale` option resizes the template, and find_scaled picks the best scale.
 // Sandbox for AI code (soulx mcp run_lua): no host access beyond the scripts folder, device operations still work.
+// load_image() opens relative paths from the script folder like templates, screenshot and img:save do, whatever the
+// working folder is: the app starts scripts from another one (it used to open them from the working folder).
+static void test_load_image(void) {
+    char cwd[PATH_MAX];
+    CHECK(file_exists("img/button.png"), "load_image: the button template exists");
+    CHECK(getcwd(cwd, sizeof(cwd)) != NULL, "load_image: getcwd");
+    CHECK(chdir("/") == 0, "load_image: chdir");
+    run(&g_run, "load_image.lua",
+        "local img = load_image('img/button.png')\n"
+        "local w, h = img:size()\n"
+        "assert(w > 0 and h > 0, 'empty image')\n"
+        "assert(load_image('./img/../img/button.png'):size() == w)\n"
+        "assert(img:find('img/button.png', {threshold = 0.99}))\n");
+    expect_ok(&g_run, "load_image: relative to the script folder, not the working folder");
+    expect_error("load_image: missing file", "load_image('img/none.png')\n", "img/none.png");
+    CHECK(chdir(cwd) == 0, "load_image: chdir back");
+}
+
 static void test_sandbox(void) {
     char box[PATH_MAX], link[PATH_MAX], outside[PATH_MAX];
     snprintf(box, sizeof(box), "%s/box", g_dir);
@@ -1519,7 +1538,8 @@ static void test_sandbox(void) {
         "assert(os.execute == nil and type(os.time) == 'function' and type(os.clock) == 'function')\n"
         "tap(10, 20)\n"
         "assert(screen_size() > 0)\n"
-        "screenshot('inside.png')\n");
+        "screenshot('inside.png')\n"
+        "assert(load_image('inside.png'):size() > 0)\n");
     expect_ok(&g_run, "sandbox: device operations and a file inside the folder");
     char inside[PATH_MAX];
     snprintf(inside, sizeof(inside), "%s/inside.png", box);
@@ -1529,6 +1549,8 @@ static void test_sandbox(void) {
     expect_error("sandbox: ..", "screenshot('../outside.png')\n", "sandbox");
     expect_error("sandbox: symlink out", "screenshot('escape/outside.png')\n", "sandbox");
     expect_error("sandbox: template outside", "find('/etc/hosts')\n", "sandbox");
+    expect_error("sandbox: load_image outside", "load_image('/etc/hosts')\n", "sandbox");
+    expect_error("sandbox: load_image ..", "load_image('../outside.png')\n", "sandbox");
     expect_error("sandbox: io", "io.open('/etc/hosts')\n", "io");
     CHECK(access(outside, F_OK) != 0 && access("/private/tmp/soulx-sandbox-x.png", F_OK) != 0,
           "sandbox: nothing was written outside");
@@ -1588,6 +1610,7 @@ int main(void) {
     test_wait();
     test_image_objects();
     test_screenshot();
+    test_load_image();
     test_device_misc();
     test_interrupt();
     test_require();

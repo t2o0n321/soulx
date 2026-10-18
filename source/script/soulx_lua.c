@@ -1385,9 +1385,13 @@ static int api_log(lua_State* L) {
 // ---------------------------------------------------------------------------
 
 // load_image(path) -> Image. Loads a PNG or JPEG file (reference images, templates, or a saved screenshot to test
-// recognition on). Pixels are RGBA, like capture(); use img:color / img:find / img:crop on it.
+// recognition on). Pixels are RGBA, like capture(); use img:color / img:find / img:crop on it. The path is relative to
+// the script folder like every other file path (templates, screenshot, img:save, install), whatever the working folder
+// is (the app does not start scripts from it); under the AI sandbox it must lie in the scripts folder.
 static int api_load_image(lua_State* L) {
-    const char* path = luaL_checkstring(L, 1);
+    ScriptCtx* ctx = api_check(L);
+    char path[PATH_MAX];
+    path_arg(L, ctx, 1, path, sizeof(path), "file name");
     LuaImage* li = image_new(L);
     if (soulx_image_load_png(path, &li->img) != 0) return script_error(L, "load_image: %s", soulx_image_error());
     gc_account(L, &li->img);
