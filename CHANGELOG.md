@@ -5,6 +5,8 @@ scripts/versioning/ turn it into the release's section, which becomes the text o
 
 ## Unreleased
 
+## v26.10.3 (2026-10-21)
+
 - **Network capture**: record an instance's WiFi traffic to a `.pcap` file for Wireshark whenever you want, without a
   restart. The launcher's toolbar has a record button (it shows the file in Finder when you stop), and
   `soulx network-capture-start` / `soulx network-capture-stop` do the same from the command line. Every instance records on its own,
