@@ -86,6 +86,7 @@ void soulx_mcp_config_defaults(SoulXMcpConfig* c);
 int  soulx_mcp_config_load(SoulXMcpConfig* c);          // missing file: defaults (off)
 int  soulx_mcp_config_save(const SoulXMcpConfig* c);
 bool soulx_mcp_instance_allowed(const SoulXMcpConfig* c, const char* name);
+int  soulx_mcp_forget_instance(const char* name);         // drop a deleted instance from the allowed list
 void soulx_mcp_audit(const char* tool, const char* instance, const char* detail, bool ok);
 int  soulx_mcp_serve(const char* self_exe);              // JSON-RPC on stdin/stdout until EOF
 void soulx_mcp_set_self(const char* self_exe);           // tests: the soulx the tools run
@@ -119,10 +120,32 @@ int  soulx_scripts_list(const char* instance, SoulXScript* out, int max);   // c
 int  soulx_script_name(const char* path, char* out, size_t cap);           // 0 when it has a name
 int  soulx_scripts_import(const char* instance, const char* src, char* dest_out, size_t cap);
 int  soulx_scripts_trash(const char* instance, const char* entry);         // a top-level entry -> ~/.Trash
+int  soulx_move_to_trash(const char* path, const char* name);              // path -> ~/.Trash/name (made unique)
+int  soulx_instance_trash_user_files(const char* instance, int* moved);   // its scripts and captures -> Trash
 int  soulx_scripts_set_name(const char* instance, const char* file, const char* name);
 int  soulx_scripts_find(const char* instance, const char* query, char* out, size_t cap);  // -1 none, -2 ambiguous
 uint64_t soulx_dir_size(const char* path);            // bytes, recursive (best effort)
 uint64_t soulx_free_disk_bytes(const char* path);
+
+// vm_archive.c - one instance as one file (.soulxvm): its disks, settings, scripts and the game keymaps
+typedef struct {
+    int  format;
+    char name[SOULX_NAME_MAX + 1];
+    char image[16];
+    char image_version[32];
+    char android[64];
+    char soulx_version[32];
+    char exported[32];           // ISO-8601 UTC
+    uint64_t bytes;              // everything inside, unpacked
+    uint64_t archive_bytes;      // the file itself
+    int  scripts;
+} SoulXVmManifest;
+typedef void (*SoulXVmProgress)(const char* phase, double fraction, void* ctx);
+                                                     // phase: prepare, checksum, pack, unpack, verify, install, done
+int soulx_vm_export(const char* name, const char* out_path, SoulXVmProgress cb, void* ctx);   // instance stopped
+int soulx_vm_inspect(const char* archive, SoulXVmManifest* m);                               // reads its manifest
+int soulx_vm_import(const char* archive, const char* as_name, char* name_out, size_t cap, SoulXVmProgress cb,
+                    void* ctx);              // as_name NULL: the exported name; never replaces an instance
 
 // ---------------------------------------------------------------------------
 // proc.c - process spawning (posix_spawn only)
@@ -262,6 +285,8 @@ typedef struct {
     int   port;                  // console port; serial = emulator-<port>; adb port = port + 1
     bool  headless;              // started without SoulX's window (the engine itself ALWAYS runs with -no-window)
     char  started[32];           // ISO-8601 UTC
+    char  network_capture_path[1024];       // the file the network capture in progress writes to ("" = not recording); set and
+                                 // cleared live by soulx_mac_network_capture_start/stop, not chosen at boot
 } SoulXRunState;
 
 void soulx_conf_defaults(SoulXInstanceConf* c, const char* name);   // balanced profile, default image
@@ -269,6 +294,8 @@ int  soulx_conf_apply_profile(SoulXInstanceConf* c, const char* profile); // "li
 const char* soulx_conf_profile_name(const SoulXInstanceConf* c);     // matches a profile, else "custom"
 bool soulx_name_valid(const char* name);                // ^[a-z0-9][a-z0-9_-]{0,31}$
 int  soulx_reg_load(const char* name, SoulXInstanceConf* out);        // 0 ok, -1 not found / invalid
+int  soulx_conf_parse(const char* text, const char* name, SoulXInstanceConf* out);   // an instance file's text, as
+                                                     // `name` (its own id/name lines do not matter); 0 ok
 int  soulx_reg_save(const SoulXInstanceConf* c);                       // atomic write
 int  soulx_reg_delete(const char* name);
 int  soulx_reg_list(SoulXInstanceConf* out, int max);                  // returns count, sorted by id
@@ -345,6 +372,21 @@ int soulx_mac_require_running(const char* name_or_id, SoulXInstanceConf* conf, S
                                                        // resolves + checks running; prints a helpful error otherwise
 void soulx_mac_cleanup_idle(void);                      // stops SoulX's private adb server (port 5137) when no SoulX
                                                        // instance has a live engine; safe to call at any time
+
+// ---------------------------------------------------------------------------
+// network_capture.c - recording an instance's WiFi traffic to a .pcap file, started and stopped while it runs
+// ---------------------------------------------------------------------------
+
+int soulx_mac_network_capture_qmp_arg(const char* instance, char* out, size_t cap);
+                                                       // "unix:<run/NAME.qmp>,server,nowait": the value after the
+                                                       // engine's "-qemu -qmp" (what capture talks to); removes a
+                                                       // stale socket; -1 = not available (path too long)
+int soulx_mac_network_capture_start(const char* instance, char* dest_out, size_t cap);
+                                                       // the engine starts writing the instance's WiFi traffic to
+                                                       // ~/Documents/SoulX Network Captures/<name>/<time>.pcap; dest_out
+                                                       // (optional) gets that path
+int soulx_mac_network_capture_stop(const char* instance, char* dest_out, size_t cap);
+                                                       // closes the file; dest_out (optional) gets its path
 
 // ---------------------------------------------------------------------------
 // apps.c - APK inspection, install, launch
@@ -469,6 +511,8 @@ int  soulx_window_spawn(const char* instance);          // starts '<this executa
                                                        // (new session, output to logs/<name>.window.log); 0 ok
 bool soulx_window_running(const char* instance, pid_t* pid_out);   // a live window process exists for the instance
                                                        // (pid file run/<name>.window, verified with proc_pidpath)
+bool soulx_running_script(const char* instance, char* path_out, size_t cap);   // the script the window is running
+                                                       // right now, if any (run/<name>.script, written by the window)
 
 // ---------------------------------------------------------------------------
 // script (source/script) - Lua engine, image matching, recorder

@@ -87,6 +87,7 @@ SoulX for those commands.
 | `SOULX_VERBOSE=1` | the same as `-v` on every command |
 | `SOULX_LANG=en` | the language of the window and launcher for this run (`en`, `zh-hant`, `zh-hans`), over the saved choice |
 | `SOULX_SCRIPTS` | the root folder of the per-instance scripts folders (default `~/Documents/SoulX Scripts`) |
+| `SOULX_NETWORK_CAPTURES` | the root folder of the per-instance network capture folders (default `~/Documents/SoulX Network Captures`) |
 | `SOULX_ACCEPT_ANDROID_SDK_LICENSE=1` | accept the Android SDK license without asking (the same as `soulx setup --accept-licenses`) |
 | `SOULX_ENGINE_FEATURES=A,B` | diagnostics: passes `-feature A -feature B` to the engine at start |
 
@@ -169,7 +170,18 @@ the next start).
 Examples: `soulx config`, `soulx config racing --cores 6 --ram 6144 --landscape`, `soulx config --gpu host-novulkan`.
 
 **`soulx delete <name> [-y|--yes]`** deletes a stopped instance and everything on it (installed apps and game data).
-You must give the name explicitly. `--yes` skips the confirmation.
+Its scripts folder and network captures in `~/Documents` go to the Trash, and it leaves AI control's list of allowed
+instances. You must give the name explicitly. `--yes` skips the confirmation.
+
+**`soulx export [-i NAME] [FILE] [-f|--force]`** saves a stopped instance as one file, `<name>.soulxvm` in the current
+folder unless you name one: its disks (apps and game progress), settings and scripts, plus the game keymaps. The
+Android runtime is not included. The instance itself is not changed. `--force` replaces an existing FILE.
+
+**`soulx import FILE [--name NAME] [--inspect [--json]]`** adds the instance saved in FILE, on this Mac or another one
+that has the runtime installed. Every file is checked against the checksums stored in the export before the instance is
+added; when anything fails, nothing is left behind. An existing instance is never replaced: when the name is taken, give
+another with `--name`. Scripts go to the new instance's scripts folder; keymaps you already have are kept.
+`--inspect` only shows what the file holds.
 
 **`soulx list [--json]`** lists your instances: id, name, state, Android version, CPUs, RAM, screen and adb serial.
 
@@ -256,6 +268,22 @@ A launcher can run `soulx stats --watch --json` once and read one line per secon
 **`soulx screenrecord [-i NAME] [out.webm]`** records the screen to a WebM video. Ctrl+C stops it, and the engine stops
 by itself after 3 minutes. The default file is `./soulx-<instance>-<date>-<time>.webm`. The path must end in `.webm`
 and contain no spaces.
+
+### Network capture
+
+**`soulx network-capture-start [-i NAME] [--json]`** starts recording the WiFi traffic of a running instance (`wlan0`, the
+network its apps use) into a `.pcap` file in `~/Documents/SoulX Network Captures/<instance>/`. Open the file in Wireshark. It
+works at any time, without a restart, and every instance records on its own.
+
+**`soulx network-capture-stop [-i NAME] [--json]`** stops the recording and prints where the file is. Stopping the instance
+ends a recording too. With `--json`, both commands print `{"path": ...}`.
+
+Nothing is recorded before `network-capture-start` or after `network-capture-stop`, so a capture takes disk space only while it runs.
+The file holds the instance's IP traffic in both directions as Ethernet frames (not the 802.11 radio frames), so DNS,
+TCP and UDP show up as on a real network; HTTPS and Android's DNS over TLS stay encrypted. The launcher's toolbar has
+the same record button and shows the finished file in Finder. `SOULX_NETWORK_CAPTURES` changes the folder.
+
+An instance that was started by an older SoulX has no capture channel yet: restart it once.
 
 ### Automation
 
@@ -401,6 +429,20 @@ like the toolbar's. With gesture navigation, Android takes every drag that start
 mouse starts drags there all the time, so drawers stopped half open. Games hide the system bars, so their layout and
 script coordinates do not change. To go back to gestures, use Android's Settings ▸ System ▸ Gestures. SoulX does not
 switch it again.
+
+### WiFi
+
+The Android Emulator has two WiFi implementations: netsim, its default, and the engine's own, which is older. SoulX
+runs the engine's own (`-feature -WiFiPacketStream`). Inside Android nothing changes: the same `AndroidWifi` network,
+DHCP and DNS, and in a quick test downloads from the Mac were as fast (about 21 MB/s, against 17 MB/s with netsim).
+
+The reason is [network capture](#network-capture). The engine's WiFi runs through a QEMU network backend that a
+recording can be attached to and removed from while the instance runs. netsim cannot do that: one netsimd serves every
+running instance and can only record all of them from its own start, and the service that would switch a single
+radio's recording on and off is disabled in the emulator's build. The engine's own `-tcpdump` and the console's
+`network capture` only see `eth0`, the cellular interface, which Android leaves idle while WiFi is up.
+
+`SOULX_ENGINE_FEATURES=WiFiPacketStream` brings netsim back for a diagnostic run; `network-capture-start` then refuses to start.
 
 ### Lean Android
 
@@ -667,8 +709,8 @@ Everything lives in `~/.soulx-android`. Set `SOULX_HOME` to use a different fold
 | `home/` | the `HOME` given to the engine and adb: adb keys, console token, engine preferences |
 | `licenses/`, `downloads/`, `tmp/` | accepted license texts, the download cache, temporary files |
 
-Your own files go to `~/Documents/SoulX Scripts/<instance>/` (that instance's scripts; see [Scripts per instance](#scripts-per-instance)), `~/Pictures/SoulX` (screenshots) and
-`~/Movies/SoulX` (videos).
+Your own files go to `~/Documents/SoulX Scripts/<instance>/` (that instance's scripts; see [Scripts per instance](#scripts-per-instance)),
+`~/Documents/SoulX Network Captures/<instance>/` (network captures), `~/Pictures/SoulX` (screenshots) and `~/Movies/SoulX` (videos).
 
 **Moving from Soul.** The first time SoulX runs, it moves Soul's `~/.soul-android` to `~/.soulx-android` and renames
 the devices and the folders above. It does this only when `SOULX_HOME` is not set and `~/.soulx-android` does not

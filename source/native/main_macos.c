@@ -10,6 +10,7 @@
  */
 
 #include <arpa/inet.h>
+#include <dirent.h>
 #include <errno.h>
 #include <libproc.h>
 #include <mach/mach_time.h>
@@ -1726,6 +1727,35 @@ static void json_instance(FILE* f, const SoulXInstanceConf* c, bool running, con
         fputs(", \"serial\": null, \"console_port\": null, \"adb_port\": null, \"pid\": null, "
               "\"headless\": null, \"started\": null", f);
     }
+    pid_t window_pid = 0;
+    fputs(", \"window_pid\": ", f);
+    if (running && soulx_window_running(c->name, &window_pid)) {
+        fprintf(f, "%d", (int)window_pid);
+    } else {
+        fputs("null", f);
+    }
+    char running_script[PATH_MAX];
+    fputs(", \"running_script\": ", f);
+    if (running && soulx_running_script(c->name, running_script, sizeof running_script)) {
+        json_str(f, running_script);
+    } else {
+        fputs("null", f);
+    }
+    // the folder holding the instance's disks and settings (shown in Finder from the launcher)
+    char avd[SOULX_NAME_MAX + 8], files_dir[PATH_MAX];
+    soulx_avd_name(c->name, avd, sizeof avd);
+    fputs(", \"files_dir\": ", f);
+    if (avd[0] && soulx_path(files_dir, sizeof files_dir, "avd/%s.avd", avd) == 0) {
+        json_str(f, files_dir);
+    } else {
+        fputs("null", f);
+    }
+    fputs(", \"network_capture_path\": ", f);
+    if (running && st->network_capture_path[0]) {
+        json_str(f, st->network_capture_path);
+    } else {
+        fputs("null", f);
+    }
     if (x) {
         fputs(", \"booted\": ", f);
         fputs(!running ? "false" : !x->boot_known ? "null" : x->booted ? "true" : "false", f);
@@ -2122,6 +2152,9 @@ static int cmd_status(const CliCommand* self, const CliArgs* a, const CliGlobal*
             printf(", %llu MB memory", (unsigned long long)x.memory_mb);
         }
         printf("\n");
+        if (st.network_capture_path[0]) {
+            printf("Network:    recording to %s\n", st.network_capture_path);
+        }
     }
     printf("Created:    %s\n", nz(c.created, "?"));
     if (x.log_path) {
@@ -2284,6 +2317,142 @@ static bool ask_yes_no(const char* question) {
     return strcasecmp(answer, "y") == 0 || strcasecmp(answer, "yes") == 0;
 }
 
+// ---------------------------------------------------------------------------
+// export / import: one instance as one .soulxvm file
+// ---------------------------------------------------------------------------
+
+typedef struct {
+    const char* verb;            // "Exporting" / "Importing"
+    int last_pct;
+    char last_phase[16];
+} VmProgressPrint;
+
+// "Packing... 42%" lines (the launcher reads the percentage), one per phase and whole percent.
+static void vm_progress(const char* phase, double frac, void* ctx) {
+    VmProgressPrint* pp = ctx;
+    int pct = (int)(frac * 100.0);
+    if (!strcmp(pp->last_phase, phase) && pct == pp->last_pct) return;
+    copy_str(pp->last_phase, sizeof pp->last_phase, phase);
+    pp->last_pct = pct;
+    const char* what = !strcmp(phase, "prepare")  ? "Preparing"
+                     : !strcmp(phase, "checksum") ? "Checking the files"
+                     : !strcmp(phase, "pack")     ? "Packing"
+                     : !strcmp(phase, "unpack")   ? "Unpacking"
+                     : !strcmp(phase, "verify")   ? "Verifying"
+                     : !strcmp(phase, "install")  ? "Adding the instance"
+                     : NULL;
+    if (!what) return;
+    if (!strcmp(phase, "prepare") || !strcmp(phase, "install")) {
+        printf("%s %s...\n", pp->verb, what);
+    } else {
+        printf("%s... %d%%\n", what, pct);
+    }
+    fflush(stdout);
+}
+
+enum { EXPORT_FORCE };
+static const CliOpt k_export_opts[] = {
+    [EXPORT_FORCE] = { "force", 'f', false },
+};
+
+static int cmd_export(const CliCommand* self, const CliArgs* a, const CliGlobal* g) {
+    if (a->npos > 1) {
+        return usage_error(self, "too many arguments: '%s'", a->pos[1]);
+    }
+    SoulXInstanceConf c;
+    if (load_instance(a->instance ? a->instance : g->instance, &c) != 0) {
+        return CLI_EXIT_FAIL;
+    }
+    char out[PATH_MAX];
+    if (a->npos == 1) {
+        copy_str(out, sizeof out, a->pos[0]);
+    } else {
+        snprintf(out, sizeof out, "%s.soulxvm", c.name);
+    }
+    size_t n = strlen(out);
+    if (n < 8 || strcmp(out + n - 8, ".soulxvm") != 0) {
+        if (n + 8 >= sizeof out) return usage_error(self, "file name too long");
+        strcat(out, ".soulxvm");
+    }
+    if (soulx_path_exists(out) && !a->val[EXPORT_FORCE]) {
+        soulx_log(SOULX_LOG_ERROR, "%s already exists; pick another file or add --force to replace it", out);
+        return CLI_EXIT_FAIL;
+    }
+    VmProgressPrint pp = { "Exporting", -1, "" };
+    if (soulx_vm_export(c.name, out, vm_progress, &pp) != 0) {
+        return g_soulx_interrupted ? CLI_EXIT_INTR : CLI_EXIT_FAIL;
+    }
+    printf("Exported '%s' to %s\n", c.name, out);
+    return CLI_EXIT_OK;
+}
+
+enum { IMPORT_NAME, IMPORT_INSPECT, IMPORT_JSON };
+static const CliOpt k_import_opts[] = {
+    [IMPORT_NAME]    = { "name",    0, true  },
+    [IMPORT_INSPECT] = { "inspect", 0, false },
+    [IMPORT_JSON]    = { "json",    0, false },
+};
+
+// A free instance name from base: base, base-2, base-3, ...
+static void free_name(const char* base, char* out, size_t cap) {
+    SoulXInstanceConf c;
+    copy_str(out, cap, base);
+    for (int i = 2; i < 100 && soulx_reg_load(out, &c) == 0; i++) {
+        char stem[SOULX_NAME_MAX + 1];
+        copy_str(stem, sizeof stem, base);
+        stem[SOULX_NAME_MAX - 3] = 0;                        // room for "-NN"
+        snprintf(out, cap, "%s-%d", stem, i);
+    }
+}
+
+static int cmd_import(const CliCommand* self, const CliArgs* a, const CliGlobal* g) {
+    (void)g;
+    if (a->npos != 1) {
+        return usage_error(self, a->npos ? "too many arguments" : "which file? e.g.: soulx import default.soulxvm");
+    }
+    const char* file = a->pos[0];
+    SoulXVmManifest m;
+    if (soulx_vm_inspect(file, &m) != 0) {
+        return CLI_EXIT_FAIL;
+    }
+    if (a->val[IMPORT_INSPECT]) {
+        SoulXInstanceConf tmp;
+        bool taken = soulx_reg_load(m.name, &tmp) == 0;
+        char suggest[SOULX_NAME_MAX + 1];
+        free_name(m.name, suggest, sizeof suggest);
+        const SoulXPackage* img = soulx_runtime_find(m.image);
+        if (a->val[IMPORT_JSON]) {
+            printf("{\"name\": ");
+            json_str(stdout, m.name);
+            printf(", \"suggested_name\": ");
+            json_str(stdout, suggest);
+            printf(", \"name_taken\": %s, \"image\": ", taken ? "true" : "false");
+            json_str(stdout, m.image);
+            printf(", \"image_known\": %s, \"android\": ", img ? "true" : "false");
+            json_str(stdout, m.android);
+            printf(", \"soulx_version\": ");
+            json_str(stdout, m.soulx_version);
+            printf(", \"exported\": ");
+            json_str(stdout, m.exported);
+            printf(", \"bytes\": %llu, \"archive_bytes\": %llu, \"scripts\": %d}\n", (unsigned long long)m.bytes,
+                   (unsigned long long)m.archive_bytes, m.scripts);
+        } else {
+            printf("Instance:  %s%s\nAndroid:   %s (%s)\nScripts:   %d\nExported:  %s by SoulX %s\nSize:      %.1f GB\n",
+                   m.name, taken ? "  (taken here: import with --name)" : "", m.android, m.image, m.scripts,
+                   m.exported, m.soulx_version, (double)m.bytes / 1e9);
+        }
+        return CLI_EXIT_OK;
+    }
+    const char* name = a->val[IMPORT_NAME];
+    VmProgressPrint pp = { "Importing", -1, "" };
+    char done[SOULX_NAME_MAX + 1];
+    if (soulx_vm_import(file, name, done, sizeof done, vm_progress, &pp) != 0) {
+        return g_soulx_interrupted ? CLI_EXIT_INTR : CLI_EXIT_FAIL;
+    }
+    printf("Imported '%s'. Start it: soulx start %s\n", done, done);
+    return CLI_EXIT_OK;
+}
+
 static int cmd_delete(const CliCommand* self, const CliArgs* a, const CliGlobal* g) {
     if (a->npos > 1) {
         return usage_error(self, "too many arguments: '%s'", a->pos[1]);
@@ -2312,9 +2481,9 @@ static int cmd_delete(const CliCommand* self, const CliArgs* a, const CliGlobal*
         if (!isatty(STDIN_FILENO)) {
             return usage_error(self, "not deleting '%s' without confirmation; add --yes", c.name);
         }
-        char question[160];
+        char question[256];
         int n = snprintf(question, sizeof question, "Delete instance '%s' and everything on it (apps, game data, "
-                         "snapshots)?", c.name);
+                         "snapshots)? Its scripts and captures go to the Trash.", c.name);
         if (n < 0 || (size_t)n >= sizeof question) {
             copy_str(question, sizeof question, "Delete this instance and everything on it?");
         }
@@ -2326,7 +2495,13 @@ static int cmd_delete(const CliCommand* self, const CliArgs* a, const CliGlobal*
     if (soulx_mac_delete(c.name) != 0) {
         return CLI_EXIT_FAIL;
     }
-    printf("Deleted instance '%s'\n", c.name);
+    // the instance's own files outside $SOULX_HOME go too, into the Trash (they are the user's: recoverable)
+    int moved = 0;
+    if (soulx_instance_trash_user_files(c.name, &moved) != 0) {
+        soulx_log(SOULX_LOG_WARN, "some of '%s''s scripts or captures could not be moved to the Trash", c.name);
+    }
+    (void)soulx_mcp_forget_instance(c.name);
+    printf("Deleted instance '%s'%s\n", c.name, moved ? "; its scripts and captures are in the Trash" : "");
     return CLI_EXIT_OK;
 }
 
@@ -2438,6 +2613,56 @@ static int cmd_uninstall(const CliCommand* self, const CliArgs* a, const CliGlob
     return package_command(self, a, g, PKG_UNINSTALL);
 }
 
+enum { NETWORK_CAPTURE_JSON };
+static const CliOpt k_network_capture_opts[] = {
+    [NETWORK_CAPTURE_JSON] = { "json", 0, false },
+};
+
+static int print_network_capture_path(const CliArgs* a, const char* verb, const char* path) {
+    if (a->val[NETWORK_CAPTURE_JSON]) {
+        printf("{\"path\": ");
+        json_str(stdout, path);
+        printf("}\n");
+    } else {
+        printf("%s: %s\n", verb, path);
+    }
+    return CLI_EXIT_OK;
+}
+
+static int cmd_network_capture_start(const CliCommand* self, const CliArgs* a, const CliGlobal* g) {
+    int rc = no_positionals(self, a);
+    if (rc != 0) {
+        return rc;
+    }
+    CliTarget t;
+    rc = cli_target(self, a, g, &t);
+    if (rc != 0) {
+        return rc;
+    }
+    char dest[1200];
+    if (soulx_mac_network_capture_start(t.conf.name, dest, sizeof(dest)) != 0) {
+        return CLI_EXIT_FAIL;
+    }
+    return print_network_capture_path(a, "Recording network traffic to", dest);
+}
+
+static int cmd_network_capture_stop(const CliCommand* self, const CliArgs* a, const CliGlobal* g) {
+    int rc = no_positionals(self, a);
+    if (rc != 0) {
+        return rc;
+    }
+    CliTarget t;
+    rc = cli_target(self, a, g, &t);
+    if (rc != 0) {
+        return rc;
+    }
+    char dest[1200];
+    if (soulx_mac_network_capture_stop(t.conf.name, dest, sizeof(dest)) != 0) {
+        return CLI_EXIT_FAIL;
+    }
+    return print_network_capture_path(a, "Saved network capture to", dest);
+}
+
 enum { APPS_ALL, APPS_JSON };
 static const CliOpt k_apps_opts[] = {
     [APPS_ALL]  = { "all", 0, false },
@@ -2487,15 +2712,18 @@ static int cmd_apps(const CliCommand* self, const CliArgs* a, const CliGlobal* g
     }
     qsort(lines, n, sizeof *lines, cmp_cstr);
     if (a->val[APPS_JSON]) {
+        char fg[256];
+        bool have_fg = soulx_foreground_package(t.serial, fg, sizeof fg) == 0;
         printf("[");
         for (size_t i = 0; i < n; i++) {
             char label[128];
             bool named = soulx_app_label(t.serial, lines[i], !all, label, sizeof label) == 0;   // --all: only names known
+            bool running = have_fg && strcmp(lines[i], fg) == 0;
             printf("%s{\"package\": ", i ? ", " : "");
             json_str(stdout, lines[i]);
             printf(", \"label\": ");
             if (named) json_str(stdout, label); else printf("null");
-            printf("}");
+            printf(", \"running\": %s}", running ? "true" : "false");
         }
         printf("]\n");
         free(lines);
@@ -3062,6 +3290,104 @@ static bool stats_sleep(int ms) {
         nanosleep(&ts, NULL);
     }
     return !soulx_interrupted();
+}
+
+// ---------------------------------------------------------------------------
+// usage: how much of the phone's own RAM and storage an instance uses (read from inside Android), plus the
+// space it takes on the Mac. Guest reads are an adb round-trip, so this is a separate, slower poll than `stats`.
+// ---------------------------------------------------------------------------
+
+enum { USAGE_JSON };
+static const CliOpt k_usage_opts[] = {
+    [USAGE_JSON] = { "json", 0, false },
+};
+
+// Actual on-disk bytes of the instance's userdata image (sparse, du-style): the data partition on the Mac.
+static uint64_t host_userdata_bytes(const char* name) {
+    char dir[PATH_MAX];
+    if (soulx_path(dir, sizeof dir, "avd/soulx_%s.avd", name) != 0) return 0;
+    DIR* d = opendir(dir);
+    if (!d) return 0;
+    uint64_t total = 0;
+    struct dirent* e;
+    while ((e = readdir(d)) != NULL) {
+        if (strncmp(e->d_name, "userdata", 8) != 0) continue;   // userdata-qemu.img and its .qcow2 overlay
+        char p[PATH_MAX];
+        if (snprintf(p, sizeof p, "%s/%s", dir, e->d_name) >= (int)sizeof p) continue;
+        struct stat st;
+        if (stat(p, &st) == 0) total += (uint64_t)st.st_blocks * 512u;
+    }
+    closedir(d);
+    return total;
+}
+
+// One "Key: 12345 kB" field from /proc/meminfo, in kB; -1 if absent.
+static long meminfo_kb(const char* s, const char* key) {
+    const char* p = strstr(s, key);
+    if (!p) return -1;
+    p += strlen(key);
+    while (*p == ' ' || *p == '\t' || *p == ':') p++;
+    char* end = NULL;
+    long v = strtol(p, &end, 10);
+    return end == p ? -1 : v;
+}
+
+static void json_long_or_null(FILE* f, long v) {
+    if (v < 0) fputs("null", f);
+    else fprintf(f, "%ld", v);
+}
+
+static int cmd_usage(const CliCommand* self, const CliArgs* a, const CliGlobal* g) {
+    if (a->npos > 1) {
+        return usage_error(self, "too many arguments: '%s'", a->pos[1]);
+    }
+    CliTarget t;
+    int rc = cli_target(self, a, g, &t);
+    if (rc != 0) {
+        return rc;
+    }
+    // One round-trip: guest RAM (/proc/meminfo) and guest /data usage (df), split by a marker.
+    static const char q[] = "cat /proc/meminfo; echo ---SOULX---; df -k /data 2>/dev/null";
+    char* out = NULL;
+    if (soulx_adb_shell(t.serial, q, &out, CLI_SHELL_TIMEOUT_MS) != 0 || !out) {
+        free(out);
+        soulx_log(SOULX_LOG_ERROR, "could not read the resource usage of '%s'", t.conf.name);
+        return CLI_EXIT_FAIL;
+    }
+    char* sep = strstr(out, "---SOULX---");
+    long mem_total_kb = meminfo_kb(out, "MemTotal:");
+    long mem_avail_kb = meminfo_kb(out, "MemAvailable:");
+    long mem_total_mb = mem_total_kb > 0 ? mem_total_kb / 1024 : -1;
+    long mem_used_mb = (mem_total_kb > 0 && mem_avail_kb >= 0) ? (mem_total_kb - mem_avail_kb) / 1024 : -1;
+
+    long st_total_mb = -1, st_used_mb = -1;      // df -k /data: "<fs> <1K-blocks> <used> <available> ..."
+    if (sep) {
+        for (char* line = strtok(sep, "\n"); line; line = strtok(NULL, "\n")) {
+            char fs[160];
+            long blocks = 0, used = 0, avail = 0;
+            if (sscanf(line, "%159s %ld %ld %ld", fs, &blocks, &used, &avail) == 4 && blocks > 0) {
+                st_total_mb = blocks / 1024;
+                st_used_mb = used / 1024;
+                break;
+            }
+        }
+    }
+    free(out);
+    unsigned long long host_st_mb = (unsigned long long)(host_userdata_bytes(t.conf.name) / (1024 * 1024));
+
+    if (a->val[USAGE_JSON]) {
+        printf("{\"name\": ");
+        json_str(stdout, t.conf.name);
+        fputs(", \"mem_used_mb\": ", stdout);     json_long_or_null(stdout, mem_used_mb);
+        fputs(", \"mem_total_mb\": ", stdout);    json_long_or_null(stdout, mem_total_mb);
+        fputs(", \"storage_used_mb\": ", stdout); json_long_or_null(stdout, st_used_mb);
+        fputs(", \"storage_total_mb\": ", stdout); json_long_or_null(stdout, st_total_mb);
+        printf(", \"host_storage_mb\": %llu}\n", host_st_mb);
+    } else {
+        printf("%s: RAM %ld/%ld MB, storage %ld/%ld MB (Mac %llu MB)\n", t.conf.name,
+               mem_used_mb, mem_total_mb, st_used_mb, st_total_mb, host_st_mb);
+    }
+    return CLI_EXIT_OK;
 }
 
 static int cmd_stats(const CliCommand* self, const CliArgs* a, const CliGlobal* g) {
@@ -3968,6 +4294,17 @@ static const CliCommand k_commands[] = {
       "Example: soulx stats --watch --json\n",
       k_stats_opts, NOPTS(k_stats_opts), CLI_INTERLEAVED, true },
 
+    { "usage", cmd_usage, GROUP_INSTANCES, "usage [name]", "guest RAM and storage of a running instance",
+      "soulx usage [name] [--json]\n"
+      "\n"
+      "Shows how much of the phone's own RAM and storage the instance is using, read from inside Android\n"
+      "(unlike 'stats', whose memory figure is the engine's footprint on the Mac), plus the space its data\n"
+      "takes on the Mac. The instance must be running.\n"
+      "\n"
+      "  --json   as JSON: {\"mem_used_mb\": .., \"mem_total_mb\": .., \"storage_used_mb\": .., "
+      "\"storage_total_mb\": .., \"host_storage_mb\": ..}\n",
+      k_usage_opts, NOPTS(k_usage_opts), CLI_INTERLEAVED, true },
+
     { "start", cmd_start, GROUP_INSTANCES, "start [name]", "start an instance (--headless: no window)",
       "soulx start [name] [--headless] [--cold] [--no-wait] [--timeout S]\n"
       "\n"
@@ -4011,10 +4348,31 @@ static const CliCommand k_commands[] = {
     { "delete", cmd_delete, GROUP_INSTANCES, "delete <name>", "delete an instance and its data",
       "soulx delete <name> [--yes]\n"
       "\n"
-      "Deletes a stopped instance and everything on it (installed apps, game data, snapshots).\n"
+      "Deletes a stopped instance and everything on it (installed apps, game data, snapshots). Its scripts\n"
+      "folder and network captures (in ~/Documents) are moved to the Trash, and it leaves the AI's list.\n"
       "\n"
       "  -y, --yes   do not ask for confirmation\n",
       k_delete_opts, NOPTS(k_delete_opts), CLI_INTERLEAVED, true },
+    { "export", cmd_export, GROUP_INSTANCES, "export [file]", "save an instance as one .soulxvm file",
+      "soulx export [-i NAME] [FILE] [--force]\n"
+      "\n"
+      "Saves a stopped instance as one file: its disks (apps and game progress), settings and scripts, plus the\n"
+      "game keymaps. Import it again with 'soulx import', on this Mac or another one. The instance is not\n"
+      "changed. FILE defaults to <name>.soulxvm in the current folder.\n"
+      "\n"
+      "  -f, --force   replace FILE when it exists\n",
+      k_export_opts, NOPTS(k_export_opts), CLI_INTERLEAVED, true },
+    { "import", cmd_import, GROUP_INSTANCES, "import <file>", "add an instance from a .soulxvm file",
+      "soulx import FILE [--name NAME] [--inspect [--json]]\n"
+      "\n"
+      "Adds the instance saved in FILE (see 'soulx export'), with its apps, game progress and scripts. Every\n"
+      "file is checked against the checksums stored in the export first. An existing instance is never\n"
+      "replaced: when the name is taken, give another with --name.\n"
+      "\n"
+      "  --name NAME   the new instance's name (default: the exported name)\n"
+      "  --inspect     only show what FILE holds\n"
+      "  --json        with --inspect: as JSON\n",
+      k_import_opts, NOPTS(k_import_opts), CLI_INTERLEAVED, false },
 
     { "install", cmd_install, GROUP_APPS, "install <file>...", "install .apk/.xapk/.apks/.apkm files",
       "soulx install [-i NAME] <file>... [--reinstall]\n"
@@ -4038,7 +4396,7 @@ static const CliCommand k_commands[] = {
       "Lists the package names of the apps you installed.\n"
       "\n"
       "  --all    include the system apps\n"
-      "  --json   as JSON: [{\"package\": ..., \"label\": the app's name or null}]\n",
+      "  --json   as JSON: [{\"package\": ..., \"label\": the app's name or null, \"running\": is it in the foreground}]\n",
       k_apps_opts, NOPTS(k_apps_opts), CLI_INTERLEAVED, true },
 
     { "stop-app", cmd_stop_app, GROUP_APPS, "stop-app <package>", "force-stop an app",
@@ -4166,6 +4524,26 @@ static const CliCommand k_commands[] = {
       "  soulx console power capacity 15\n"
       "  soulx console help\n",
       NO_OPTS, CLI_STOP_AT_POSITIONAL, true },
+
+    { "network-capture-start", cmd_network_capture_start, GROUP_TOOLS, "network-capture-start", "start recording network traffic",
+      "soulx network-capture-start [-i NAME] [--json]\n"
+      "\n"
+      "Starts recording the WiFi traffic of a running instance (wlan0, the network its apps use) to a .pcap\n"
+      "file under ~/Documents/SoulX Network Captures/<name>/; open it in Wireshark. Nothing is recorded before this\n"
+      "command or after 'soulx network-capture-stop', and every instance records on its own. An instance started by\n"
+      "an older SoulX has to be restarted once first.\n"
+      "\n"
+      "  --json   print {\"path\": ...} instead\n",
+      k_network_capture_opts, NOPTS(k_network_capture_opts), CLI_INTERLEAVED, true },
+
+    { "network-capture-stop", cmd_network_capture_stop, GROUP_TOOLS, "network-capture-stop", "stop recording network traffic",
+      "soulx network-capture-stop [-i NAME] [--json]\n"
+      "\n"
+      "Stops the capture started with 'soulx network-capture-start' and prints where the .pcap is. Stopping the\n"
+      "instance ends a capture too.\n"
+      "\n"
+      "  --json   print {\"path\": ...} instead\n",
+      k_network_capture_opts, NOPTS(k_network_capture_opts), CLI_INTERLEAVED, true },
 
     { "doctor", cmd_doctor, GROUP_TOOLS, "doctor", "check this Mac, the runtime and your instances",
       "soulx doctor\n"

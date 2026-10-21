@@ -166,3 +166,36 @@ bool soulx_window_running(const char* instance, pid_t* pid_out) {
     if (pid_out) *pid_out = pid;
     return true;
 }
+
+// run/<name>.script ("pid=<n>\npath=<...>\n"), written by the window while it runs a script job
+// (window_controller.m startJob:/jobExited:). Informational only: no identity cross-check like
+// soulx_window_running above, since the launcher only uses this to show which script is running and offer to
+// stop it, never to decide who owns anything. A stale file (the window crashed without cleaning up) is caught
+// by the pid liveness check.
+bool soulx_running_script(const char* instance, char* path_out, size_t cap) {
+    if (path_out && cap) path_out[0] = '\0';
+    if (!soulx_name_valid(instance)) return false;
+    char path[PATH_MAX];
+    if (soulx_path(path, sizeof(path), "run/%s.script", instance) != 0) return false;
+    char* data = NULL;
+    size_t len = 0;
+    if (soulx_read_file(path, &data, &len) != 0 || !data) return false;
+
+    pid_t pid = 0;
+    char script[PATH_MAX] = "";
+    char* save = NULL;
+    for (char* line = strtok_r(data, "\n", &save); line; line = strtok_r(NULL, "\n", &save)) {
+        if (strncmp(line, "pid=", 4) == 0) {
+            char* end = NULL;
+            long v = strtol(line + 4, &end, 10);
+            if (end != line + 4 && v > 1 && v < INT32_MAX) pid = (pid_t)v;
+        } else if (strncmp(line, "path=", 5) == 0 && strlen(line + 5) < sizeof(script)) {
+            snprintf(script, sizeof(script), "%s", line + 5);
+        }
+    }
+    free(data);
+
+    if (pid <= 0 || script[0] == '\0' || !soulx_pid_alive(pid)) return false;
+    if (path_out) snprintf(path_out, cap, "%s", script);
+    return true;
+}

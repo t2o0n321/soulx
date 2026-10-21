@@ -33,6 +33,7 @@
 #include <string.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
+#include <sys/un.h>
 #include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
@@ -438,6 +439,13 @@ static void test_state(void) {
     CHECK(soulx_state_save("alpha", &st) == 0);
     CHECK(soulx_state_load("alpha", &back) == 0);
     CHECK(back.pid == 4242 && back.port == SOULX_PORT_FIRST + 2 && back.headless && !strcmp(back.started, st.started));
+    CHECK(back.network_capture_path[0] == '\0');                                      // not recording
+    snprintf(st.network_capture_path, sizeof(st.network_capture_path), "/Users/x/Documents/SoulX Network Captures/a \"b\"/2026-10-12.pcap");
+    CHECK(soulx_state_save("alpha", &st) == 0 && soulx_state_load("alpha", &back) == 0);
+    CHECK_STR(back.network_capture_path, st.network_capture_path);                               // the capture in progress survives
+    snprintf(st.network_capture_path, sizeof(st.network_capture_path), "/tmp/two\nlines.pcap");
+    CHECK(soulx_state_save("alpha", &st) == -1);                           // would corrupt the file
+    st.network_capture_path[0] = '\0';
     CHECK(soulx_state_clear("alpha") == 0);
     CHECK(soulx_state_load("alpha", &back) == -1);
     CHECK(soulx_state_clear("alpha") == 0);                               // already gone
@@ -1681,6 +1689,126 @@ static void test_api_details(void) {
     logs_stop();
 }
 
+// Network capture: the engine runs the built-in WiFi with a QMP socket, and network-capture-start / network-capture-stop add and
+// remove the dump on it. The fake engine's QMP server (below) logs what it is asked and writes the file itself,
+// like QEMU does; captures go to a folder with a space and a quote in its name to prove the JSON round trip.
+static int qmp_log_count(const char* what) {
+    char path[PATH_MAX];
+    home_path(path, sizeof(path), "tmp/fake-qmp.log");
+    char* text = read_text(path);
+    int n = 0;
+    for (const char* p = text; p && *p; p = strchr(p, '\n') ? strchr(p, '\n') + 1 : NULL) {
+        if (strncmp(p, what, strlen(what)) == 0) n++;
+    }
+    free(text);
+    return n;
+}
+
+static void start_headless(const char* name, SoulXRunState* st) {
+    SoulXStartOpts o;
+    memset(&o, 0, sizeof(o));
+    o.headless = true;
+    CHECK(soulx_mac_start(name, &o, st) == 0);
+}
+
+static void test_capture(void) {
+    char caps[PATH_MAX], path[PATH_MAX], want[PATH_MAX + 64];
+    home_path(caps, sizeof(caps), "captures \"q\"");
+    setenv("SOULX_NETWORK_CAPTURES", caps, 1);
+    home_path(path, sizeof(path), "tmp/fake-qmp.log");
+    unlink(path);
+
+    SoulXInstanceConf c;
+    soulx_conf_defaults(&c, "cap");
+    CHECK(soulx_mac_create(&c) == 0);
+    SoulXRunState st;
+    start_headless("cap", &st);
+
+    // the engine got the built-in WiFi and the control socket, the -qemu part last
+    char sock[PATH_MAX];
+    home_path(sock, sizeof(sock), "run/cap.qmp");
+    home_path(path, sizeof(path), "logs/cap.log");
+    char* log = read_text(path);
+    snprintf(want, sizeof(want), " -qemu -qmp unix:%s,server,nowait\n", sock);
+    CHECK(log && strstr(log, " -feature -WiFiPacketStream ") && strstr(log, want));
+    free(log);
+
+    // nothing records before network-capture-start, and only one recording runs at a time
+    char dest[1200], again[1200];
+    SoulXRunState now;
+    CHECK(soulx_mac_network_capture_stop("cap", NULL, 0) != 0);
+    CHECK(qmp_log_count("object-add") == 0);
+    CHECK(soulx_mac_network_capture_start("cap", dest, sizeof(dest)) == 0);
+    snprintf(want, sizeof(want), "%s/cap/", caps);
+    CHECK(strncmp(dest, want, strlen(want)) == 0 && strstr(dest, ".pcap") != NULL);
+    CHECK(access(dest, F_OK) == 0);                                      // the engine opened it
+    CHECK(soulx_instance_running("cap", &now) && !strcmp(now.network_capture_path, dest));
+    CHECK(soulx_mac_network_capture_start("cap", NULL, 0) != 0);
+    CHECK(soulx_mac_network_capture_stop("cap", again, sizeof(again)) == 0 && !strcmp(dest, again));
+    CHECK(soulx_instance_running("cap", &now) && now.network_capture_path[0] == '\0');
+    CHECK(soulx_mac_network_capture_stop("cap", NULL, 0) != 0);
+    CHECK(qmp_log_count("object-add") == 1 && qmp_log_count("object-del") == 1);
+    snprintf(want, sizeof(want), "object-add %s", dest);
+    home_path(path, sizeof(path), "tmp/fake-qmp.log");
+    char* q = read_text(path);
+    CHECK(q && strstr(q, want));                                         // the path came through intact
+    free(q);
+
+    // every recording gets a file of its own, even within the same second
+    CHECK(soulx_mac_network_capture_start("cap", again, sizeof(again)) == 0 && strcmp(dest, again) != 0);
+
+    // stopping the instance closes a recording in progress first; the next run starts clean
+    stop_and_reap("cap");
+    CHECK(qmp_log_count("object-del") == 2);
+    start_headless("cap", &st);
+    CHECK(soulx_instance_running("cap", &now) && now.network_capture_path[0] == '\0');
+
+    // an engine without the built-in WiFi card (SOULX_ENGINE_FEATURES re-enabling netsim WiFi) would record an
+    // empty file: refused, and nothing is attached
+    stop_and_reap("cap");
+    setenv("SOULX_TEST_FAKE_NO_WIFI_NIC", "1", 1);
+    start_headless("cap", &st);
+    int adds = qmp_log_count("object-add");
+    CHECK(soulx_mac_network_capture_start("cap", NULL, 0) != 0 && qmp_log_count("object-add") == adds);
+    CHECK(soulx_instance_running("cap", &now) && now.network_capture_path[0] == '\0');
+    stop_and_reap("cap");
+    unsetenv("SOULX_TEST_FAKE_NO_WIFI_NIC");
+
+    // an engine started without the control socket (an older SoulX): a clear failure, no state change
+    setenv("SOULX_TEST_FAKE_NO_QMP", "1", 1);
+    start_headless("cap", &st);
+    CHECK(soulx_mac_network_capture_start("cap", NULL, 0) != 0);
+    CHECK(soulx_instance_running("cap", &now) && now.network_capture_path[0] == '\0');
+    stop_and_reap("cap");
+    unsetenv("SOULX_TEST_FAKE_NO_QMP");
+    CHECK(soulx_mac_network_capture_start("cap", NULL, 0) != 0);                 // not running at all
+    CHECK(soulx_mac_delete("cap") == 0);
+
+    // the socket argument: commas are doubled for QEMU, and a path too long for a unix socket is refused
+    char saved[PATH_MAX];
+    snprintf(saved, sizeof(saved), "%s", g_home);
+    char odd[PATH_MAX], arg[PATH_MAX + 64];
+    snprintf(odd, sizeof(odd), "%s/a,b", g_home);
+    setenv("SOULX_HOME", odd, 1);
+    CHECK(soulx_mac_network_capture_qmp_arg("x", arg, sizeof(arg)) == 0);
+    snprintf(want, sizeof(want), "unix:%s/a,,b/run/x.qmp,server,nowait", g_home);
+    CHECK_STR(arg, want);
+    char longhome[PATH_MAX];
+    snprintf(longhome, sizeof(longhome), "%s/%0120d", g_home, 0);
+    setenv("SOULX_HOME", longhome, 1);
+    CHECK(soulx_mac_network_capture_qmp_arg("x", arg, sizeof(arg)) == -1);
+    setenv("SOULX_HOME", saved, 1);
+    unsetenv("SOULX_NETWORK_CAPTURES");
+
+    // a socket that cannot be created (here: its path is a folder) means no capture channel, not an engine that
+    // refuses to start
+    home_path(path, sizeof(path), "run/x.qmp");
+    CHECK(mkdir(path, 0755) == 0);
+    CHECK(soulx_mac_network_capture_qmp_arg("x", arg, sizeof(arg)) == -1);
+    CHECK(rmdir(path) == 0);
+    CHECK(soulx_mac_network_capture_qmp_arg("x", arg, sizeof(arg)) == 0 && access(path, F_OK) != 0);   // probe left nothing
+}
+
 static void test_engine_lifecycle(void) {
     if (!install_fake_runtime()) {
         CHECK(!"fake runtime could not be installed");
@@ -1701,6 +1829,7 @@ static void test_engine_lifecycle(void) {
     test_delete_and_orphans();
     test_reconfigure();
     test_api_details();
+    test_capture();
 }
 
 // ---------------------------------------------------------------------------
@@ -1826,8 +1955,141 @@ static int fake_engine_console(int port, int delay_ms) {
     }
 }
 
+// Stand-in for QEMU's QMP socket (-qemu -qmp unix:...): one client at a time, the greeting, then a canned answer
+// for the commands network_capture.c sends. What was asked lands in $SOULX_HOME/tmp/fake-qmp.log, and object-add creates
+// the file like filter-dump does (a pcap with two packets). The "dump" state belongs to the engine, so it
+// survives reconnects.
+static void fake_qmp_log(const char* line) {
+    const char* home = getenv("SOULX_HOME");
+    char path[PATH_MAX];
+    if (!home || snprintf(path, sizeof(path), "%s/tmp/fake-qmp.log", home) >= (int)sizeof(path)) return;
+    FILE* f = fopen(path, "a");
+    if (!f) return;
+    fprintf(f, "%s\n", line);
+    fclose(f);
+}
+
+static void fake_qmp_say(int fd, const char* line) {
+    (void)!write(fd, line, strlen(line));
+    (void)!write(fd, "\r\n", 2);
+}
+
+static void fake_qmp_answer(int fd, const char* cmd, bool* dump_on) {
+    static const unsigned char pcap[] = {
+        0xd4, 0xc3, 0xb2, 0xa1, 2, 0, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff, 0, 0, 1, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 4, 0, 0, 0, 4, 0, 0, 0, 1, 2, 3, 4,
+        1, 0, 0, 0, 0, 0, 0, 0, 4, 0, 0, 0, 4, 0, 0, 0, 5, 6, 7, 8,
+    };
+    if (strstr(cmd, "qmp_capabilities")) {
+        fake_qmp_say(fd, "{\"return\": {}}");
+    } else if (strstr(cmd, "human-monitor-command")) {
+        const char* no_nic = getenv("SOULX_TEST_FAKE_NO_WIFI_NIC");
+        if (no_nic && !strcmp(no_nic, "1")) {
+            fake_qmp_say(fd, "{\"return\": \"virtio-wifi: index=0,type=user,net=10.0.2.0\\r\\n\"}");
+        } else {
+            fake_qmp_say(fd, "{\"return\": \"virtio-wifi-device: index=0,type=nic,\\r\\n \\\\ virtio-wifi: index=0,type=user\\r\\n\"}");
+        }
+    } else if (strstr(cmd, "\"object-add\"")) {
+        const char* f = strstr(cmd, "\"file\":\"");
+        char file[PATH_MAX];
+        size_t n = 0;
+        for (const char* p = f ? f + 8 : NULL; p && *p && *p != '"' && n + 1 < sizeof(file); p++) {
+            if (*p == '\\' && p[1]) p++;                                 // \" and \\ in the JSON string
+            file[n++] = *p;
+        }
+        file[n] = '\0';
+        bool ok = f && strstr(cmd, "\"qom-type\":\"filter-dump\"") && strstr(cmd, "\"id\":\"soulxcap\"") &&
+                  strstr(cmd, "\"netdev\":\"virtio-wifi\"");
+        if (!ok || *dump_on) {
+            fake_qmp_say(fd, "{\"error\": {\"class\": \"GenericError\", \"desc\": \"cannot add the object\"}}");
+            return;
+        }
+        FILE* out = fopen(file, "wb");
+        if (!out) {
+            fake_qmp_say(fd, "{\"error\": {\"class\": \"GenericError\", \"desc\": \"Could not open the file\"}}");
+            return;
+        }
+        fwrite(pcap, 1, sizeof(pcap), out);
+        fclose(out);
+        *dump_on = true;
+        char line[PATH_MAX + 32];
+        snprintf(line, sizeof(line), "object-add %s", file);
+        fake_qmp_log(line);
+        fake_qmp_say(fd, "{\"timestamp\": {\"seconds\": 1, \"microseconds\": 2}, \"event\": \"NIC_RX_FILTER_CHANGED\"}");
+        fake_qmp_say(fd, "{\"return\": {}}");
+    } else if (strstr(cmd, "\"object-del\"")) {
+        if (!*dump_on) {
+            fake_qmp_say(fd, "{\"error\": {\"class\": \"GenericError\", \"desc\": \"object 'soulxcap' not found\"}}");
+            return;
+        }
+        *dump_on = false;
+        fake_qmp_log("object-del");
+        fake_qmp_say(fd, "{\"return\": {}}");
+    } else {
+        fake_qmp_say(fd, "{\"error\": {\"class\": \"CommandNotFound\", \"desc\": \"unknown command\"}}");
+    }
+}
+
+static void* fake_qmp_serve(void* arg) {
+    int ls = (int)(intptr_t)arg;
+    bool dump_on = false;
+    for (;;) {
+        int fd = accept(ls, NULL, NULL);
+        if (fd < 0) continue;
+        fake_qmp_say(fd, "{\"QMP\": {\"version\": {\"qemu\": {\"micro\": 0, \"minor\": 12, \"major\": 2}, "
+                         "\"package\": \"fake\"}, \"capabilities\": []}}");
+        char buf[8192];
+        size_t len = 0;
+        for (;;) {
+            char* nl = memchr(buf, '\n', len);
+            if (!nl) {
+                ssize_t got = read(fd, buf + len, sizeof(buf) - 1 - len);
+                if (got <= 0) break;
+                len += (size_t)got;
+                continue;
+            }
+            *nl = '\0';
+            fake_qmp_answer(fd, buf, &dump_on);
+            len -= (size_t)(nl + 1 - buf);
+            memmove(buf, nl + 1, len);
+        }
+        close(fd);
+    }
+    return NULL;
+}
+
+// -qemu -qmp unix:<path>,server,nowait: listens there, like the real engine (an old socket file is replaced).
+static void fake_qmp_listen(int argc, char** argv) {
+    const char* no_qmp = getenv("SOULX_TEST_FAKE_NO_QMP");
+    if (no_qmp && !strcmp(no_qmp, "1")) return;                          // an engine from before the capture channel
+    for (int i = 1; i + 1 < argc; i++) {
+        if (strcmp(argv[i], "-qmp") != 0 || strncmp(argv[i + 1], "unix:", 5) != 0) continue;
+        char path[PATH_MAX];
+        size_t n = 0;
+        const char* v = argv[i + 1] + 5;
+        const char* end = strstr(v, ",server,nowait");
+        for (; end && v < end && n + 1 < sizeof(path); v++) {
+            if (v[0] == ',' && v[1] == ',') v++;                         // ",," is a literal comma
+            path[n++] = *v;
+        }
+        path[n] = '\0';
+        struct sockaddr_un sa;
+        memset(&sa, 0, sizeof(sa));
+        sa.sun_family = AF_UNIX;
+        if (!end || n == 0 || n >= sizeof(sa.sun_path)) return;
+        memcpy(sa.sun_path, path, n + 1);
+        int ls = socket(AF_UNIX, SOCK_STREAM, 0);
+        unlink(path);
+        if (ls < 0 || bind(ls, (struct sockaddr*)&sa, sizeof(sa)) != 0 || listen(ls, 1) != 0) return;
+        pthread_t t;
+        if (pthread_create(&t, NULL, fake_qmp_serve, (void*)(intptr_t)ls) == 0) pthread_detach(t);
+        return;
+    }
+}
+
 static int fake_engine(int argc, char** argv) {
     alarm(300);                                                          // never outlive an aborted test run
+    fake_qmp_listen(argc, argv);
     const char* delay = getenv("SOULX_TEST_FAKE_CONSOLE_MS");             // set: serve the emulator console
     int port = 0;
     for (int i = 1; i + 1 < argc; i++) {

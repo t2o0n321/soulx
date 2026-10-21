@@ -136,6 +136,8 @@ NSImage*  SoulXAppIcon(void);                                   // drawn in code
 @property (nonatomic, copy) void (^onFinish)(int code);   // once, when the window process should exit
 - (void)engineDidExit;                                   // the engine went away by itself
 - (void)bringToFront;                                    // another 'soulx window <name>' asked for the window
+- (void)requestRun:(NSString*)path;                       // the launcher asked to run one of this instance's scripts
+- (void)requestStop;                                      // the launcher's Stop button (same as soulxStopScript:)
 - (void)closeAndStop:(id)sender;                         // close button, Quit, Command-W: graceful stop
 - (void)closeKeepRunning:(id)sender;                     // Option-Command-W, signals, --exit-after-ms
 // menu actions

@@ -253,19 +253,11 @@ int soulx_scripts_import(const char* instance, const char* src, char* dest_out, 
     return 0;
 }
 
-int soulx_scripts_trash(const char* instance, const char* entry) {
-    if (!entry_ok(entry)) {
-        soulx_log(SOULX_LOG_ERROR, "'%s' is not an entry of the scripts folder", entry ? entry : "");
-        return -1;
-    }
-    char folder[PATH_MAX], path[PATH_MAX], home[PATH_MAX], trash[PATH_MAX], to[PATH_MAX];
-    if (soulx_scripts_dir(instance, folder, sizeof(folder), false) != 0 ||
-        snprintf(path, sizeof(path), "%s/%s", folder, entry) >= (int)sizeof(path)) return -1;
-    if (!soulx_path_exists(path)) {
-        soulx_log(SOULX_LOG_ERROR, "no script '%s' in %s", entry, folder);
-        return -1;
-    }
-    const char* tenv = getenv("SOULX_TRASH_DIR");          // tests: never the user's real Trash
+// Moves path into the Trash as `name` (made unique the way the Trash does it). $SOULX_TRASH_DIR, when set,
+// stands in for the Trash (tests never touch the user's real one). 0 ok.
+int soulx_move_to_trash(const char* path, const char* name) {
+    char home[PATH_MAX], trash[PATH_MAX], to[PATH_MAX];
+    const char* tenv = getenv("SOULX_TRASH_DIR");
     if (tenv && tenv[0] == '/') {
         if (snprintf(trash, sizeof(trash), "%s", tenv) >= (int)sizeof(trash)) return -1;
     } else if (!user_dir(home, sizeof(home)) || snprintf(trash, sizeof(trash), "%s/.Trash", home) >= (int)sizeof(trash)) {
@@ -273,21 +265,74 @@ int soulx_scripts_trash(const char* instance, const char* entry) {
     }
     (void)soulx_mkdirs(trash);
     // the Trash keeps names unique: "farm.lua", then "farm.lua 2026-10-17 12.30.05", then with a counter
-    snprintf(to, sizeof(to), "%s/%s", trash, entry);
+    snprintf(to, sizeof(to), "%s/%s", trash, name);
     if (soulx_path_exists(to)) {
         char stamp[32];
         time_t now = time(NULL);
         struct tm tm;
         localtime_r(&now, &tm);
         strftime(stamp, sizeof(stamp), "%Y-%m-%d %H.%M.%S", &tm);
-        snprintf(to, sizeof(to), "%s/%s %s", trash, entry, stamp);
-        for (int i = 2; soulx_path_exists(to) && i < 100; i++) snprintf(to, sizeof(to), "%s/%s %s %d", trash, entry, stamp, i);
+        snprintf(to, sizeof(to), "%s/%s %s", trash, name, stamp);
+        for (int i = 2; soulx_path_exists(to) && i < 100; i++) snprintf(to, sizeof(to), "%s/%s %s %d", trash, name, stamp, i);
     }
     if (rename(path, to) != 0) {
         soulx_log(SOULX_LOG_ERROR, "cannot move %s to the Trash: %s", path, strerror(errno));
         return -1;
     }
     return 0;
+}
+
+int soulx_scripts_trash(const char* instance, const char* entry) {
+    if (!entry_ok(entry)) {
+        soulx_log(SOULX_LOG_ERROR, "'%s' is not an entry of the scripts folder", entry ? entry : "");
+        return -1;
+    }
+    char folder[PATH_MAX], path[PATH_MAX];
+    if (soulx_scripts_dir(instance, folder, sizeof(folder), false) != 0 ||
+        snprintf(path, sizeof(path), "%s/%s", folder, entry) >= (int)sizeof(path)) return -1;
+    if (!soulx_path_exists(path)) {
+        soulx_log(SOULX_LOG_ERROR, "no script '%s' in %s", entry, folder);
+        return -1;
+    }
+    return soulx_move_to_trash(path, entry);
+}
+
+// The folders in ~/Documents that belong to one instance: its scripts, its network captures, and the captures of
+// SoulX versions before network_capture (SoulX Captures/<name>). Deleting the instance moves them to the Trash.
+int soulx_instance_trash_user_files(const char* instance, int* moved) {
+    if (moved) *moved = 0;
+    if (!soulx_name_valid(instance)) return -1;
+    char home[PATH_MAX], dir[PATH_MAX], label[160];
+    int rc = 0;
+    struct { const char* env; const char* docs; const char* what; } spots[] = {
+        { NULL, NULL, "scripts" },
+        { "SOULX_NETWORK_CAPTURES", "SoulX Network Captures", "network captures" },
+        { NULL, "SoulX Captures", "captures" },
+    };
+    bool have_home = user_dir(home, sizeof(home));
+    for (size_t i = 0; i < sizeof(spots) / sizeof(spots[0]); i++) {
+        int n = -1;
+        if (i == 0) {
+            n = soulx_scripts_dir(instance, dir, sizeof(dir), false) == 0 ? 0 : -1;
+        } else {
+            const char* base = spots[i].env ? getenv(spots[i].env) : NULL;
+            if (base && base[0] == '/') {
+                n = snprintf(dir, sizeof(dir), "%s/%s", base, instance);
+            } else if (have_home) {
+                n = snprintf(dir, sizeof(dir), "%s/Documents/%s/%s", home, spots[i].docs, instance);
+            }
+            if (n >= (int)sizeof(dir)) n = -1;
+        }
+        if (n < 0 || !soulx_is_dir(dir)) continue;
+        snprintf(label, sizeof(label), "%s %s", instance, spots[i].what);      // "farm scripts" in the Trash
+        if (soulx_move_to_trash(dir, label) == 0) {
+            if (moved) (*moved)++;
+            soulx_log(SOULX_LOG_INFO, "moved %s to the Trash (as \"%s\")", dir, label);
+        } else {
+            rc = -1;
+        }
+    }
+    return rc;
 }
 
 int soulx_scripts_set_name(const char* instance, const char* file, const char* name) {

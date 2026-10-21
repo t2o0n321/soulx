@@ -24,12 +24,18 @@ public struct Instance: Decodable, Identifiable, Equatable, Sendable {
     public let serial: String?
     public let pid: Int?
     public let headless: Bool?
+    public let windowPid: Int?            // the pid of SoulX's own window for this instance, nil when none is open
+    public let runningScript: String?     // full path of the script the window is running there, nil when none
+    public let networkCapturePath: String?          // this run's network capture file, nil when not recording
+    public let filesDir: String?          // the folder with its disks and settings ($SOULX_HOME/avd/soulx_<name>.avd)
 
     public var running: Bool { state == "running" }
 
     enum CodingKeys: String, CodingKey {
         case number = "id", name, state, image, android, cores, ramMB = "ram_mb", dataGB = "data_gb", width, height,
-             dpi, landscape, gpu, dns, stayAwake = "stay_awake", lean, fps, audio, serial, pid, headless
+             dpi, landscape, gpu, dns, stayAwake = "stay_awake", lean, fps, audio, serial, pid, headless,
+             windowPid = "window_pid", runningScript = "running_script", networkCapturePath = "network_capture_path",
+             filesDir = "files_dir"
     }
 
     public init(from decoder: Decoder) throws {
@@ -56,6 +62,10 @@ public struct Instance: Decodable, Identifiable, Equatable, Sendable {
         serial = try c.decodeIfPresent(String.self, forKey: .serial)
         pid = try c.decodeIfPresent(Int.self, forKey: .pid)
         headless = try c.decodeIfPresent(Bool.self, forKey: .headless)
+        windowPid = try c.decodeIfPresent(Int.self, forKey: .windowPid)
+        runningScript = try c.decodeIfPresent(String.self, forKey: .runningScript)
+        networkCapturePath = try c.decodeIfPresent(String.self, forKey: .networkCapturePath)
+        filesDir = try c.decodeIfPresent(String.self, forKey: .filesDir)
     }
 
     /// The instance's settings as an editable value.
@@ -84,6 +94,21 @@ public struct StatsSample: Decodable, Sendable {
     }
     public let host: Host
     public let instances: [Entry]
+}
+
+/// `soulx usage <name> --json`: the phone's own (in-VM) RAM and storage use, read from inside Android, plus the
+/// space its data takes on the Mac. A slower poll than `stats` because each read is an adb round-trip.
+public struct UsageInfo: Decodable, Sendable {
+    public let name: String
+    public let memUsedMB: Int?         // guest RAM in use (MemTotal - MemAvailable)
+    public let memTotalMB: Int?        // guest RAM total (a little under the configured amount)
+    public let storageUsedMB: Int?     // guest /data used
+    public let storageTotalMB: Int?    // guest /data total
+    public let hostStorageMB: Int?     // the instance's userdata image on the Mac (host-side footprint)
+    enum CodingKeys: String, CodingKey {
+        case name, memUsedMB = "mem_used_mb", memTotalMB = "mem_total_mb",
+             storageUsedMB = "storage_used_mb", storageTotalMB = "storage_total_mb", hostStorageMB = "host_storage_mb"
+    }
 }
 
 /// `soulx volume --json`.
@@ -189,10 +214,40 @@ public struct McpClientApp: Decodable, Identifiable, Sendable {
     public let config: String
 }
 
-/// One installed app from `soulx apps --json`.
-public struct InstalledApp: Decodable, Identifiable, Hashable, Sendable {
+/// One installed app from `soulx apps --json`; also cached on disk so AppsSection can show the last
+/// known list while an instance is stopped.
+public struct InstalledApp: Codable, Identifiable, Hashable, Sendable {
     public let package: String
     public let label: String?            // the app's name; nil when it could not be read
+    public let running: Bool             // in the foreground right now; always false in a cached (stopped) entry
     public var id: String { package }
     public var title: String { label.flatMap { $0.isEmpty ? nil : $0 } ?? package }
+
+    enum CodingKeys: String, CodingKey { case package, label, running }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        package = try c.decode(String.self, forKey: .package)
+        label = try c.decodeIfPresent(String.self, forKey: .label)
+        running = try c.decodeIfPresent(Bool.self, forKey: .running) ?? false
+    }
+}
+
+/// `soulx import FILE --inspect --json`: what a .soulxvm export holds.
+public struct VmManifest: Decodable, Sendable {
+    public let name: String
+    public let suggestedName: String
+    public let nameTaken: Bool
+    public let image: String
+    public let imageKnown: Bool
+    public let android: String
+    public let soulxVersion: String
+    public let exported: String
+    public let bytes: Int64
+    public let archiveBytes: Int64
+    public let scripts: Int
+    enum CodingKeys: String, CodingKey {
+        case name, suggestedName = "suggested_name", nameTaken = "name_taken", image, imageKnown = "image_known",
+             android, soulxVersion = "soulx_version", exported, bytes, archiveBytes = "archive_bytes", scripts
+    }
 }

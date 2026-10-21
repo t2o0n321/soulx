@@ -112,6 +112,31 @@ bool soulx_mcp_instance_allowed(const SoulXMcpConfig* c, const char* name) {
     return false;
 }
 
+// A deleted instance leaves the AI's list of allowed instances (else a new one with its name would inherit it).
+int soulx_mcp_forget_instance(const char* name) {
+    SoulXMcpConfig c;
+    if (!name || soulx_mcp_config_load(&c) != 0 || !strcmp(c.instances, "*")) return 0;
+    if (!soulx_mcp_instance_allowed(&c, name)) return 0;
+    char out[sizeof(c.instances)] = "";
+    size_t nl = strlen(name), used = 0;
+    for (const char* p = c.instances; *p; ) {
+        while (*p == ',' || *p == ' ') p++;
+        const char* e = p;
+        while (*e && *e != ',') e++;
+        size_t len = (size_t)(e - p);
+        while (len && p[len - 1] == ' ') len--;
+        if (len && !(len == nl && !strncmp(p, name, nl)) && used + len + 2 < sizeof(out)) {
+            if (used) out[used++] = ',';
+            memcpy(out + used, p, len);
+            used += len;
+            out[used] = 0;
+        }
+        p = e;
+    }
+    snprintf(c.instances, sizeof(c.instances), "%s", out);
+    return soulx_mcp_config_save(&c);
+}
+
 // ---------------------------------------------------------------------------
 // Audit log
 // ---------------------------------------------------------------------------

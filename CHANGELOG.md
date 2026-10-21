@@ -5,6 +5,32 @@ scripts/versioning/ turn it into the release's section, which becomes the text o
 
 ## Unreleased
 
+- **Network capture**: record an instance's WiFi traffic to a `.pcap` file for Wireshark whenever you want, without a
+  restart. The launcher's toolbar has a record button (it shows the file in Finder when you stop), and
+  `soulx network-capture-start` / `soulx network-capture-stop` do the same from the command line. Every instance records on its own,
+  and nothing is recorded or written before you start. Files go to `~/Documents/SoulX Network Captures/<instance>/`.
+  Instances that are already running need one restart first.
+- WiFi: instances now run the engine's own WiFi instead of netsim, so a recording can be attached to one instance's
+  `wlan0` while it runs. Inside Android it is the same `AndroidWifi` network, and downloads were as fast in a quick test.
+- **Export and import instances**: save a stopped instance as one `.soulxvm` file (its apps, game progress, settings and
+  scripts, plus the game keymaps) and add it again on this Mac or another one: **Export…** in an instance's ⋯ menu,
+  **Import existing instance…** under the sidebar's +, or `soulx export` / `soulx import`. The Android runtime is not
+  in the file. Every file is checked against checksums before the instance is added; an import never replaces an
+  existing instance (a taken name gets another), and nothing is left behind when it fails.
+- Deleting an instance also moves its scripts folder and network captures (in `~/Documents`) to the Trash, and takes it
+  off AI control's list of allowed instances. They stayed behind before.
+- **New look**: the launcher is redesigned with Liquid Glass. An instance's page shows its CPU, memory, storage and
+  uptime, its apps (search, list or grid) and scripts side by side with its settings, and adapts to the window's width
+  (cards re-flow instead of being cut off). New instance, AI control, first-run setup and SoulX's own window (toolbar
+  card, rounded screen, centred title) follow the same design. Settings that cannot change while an instance runs are
+  greyed out, and so are AI control's settings while it is off.
+- First run: setup shows the three steps from installing to playing, and the rest of the launcher waits until the
+  runtime is installed. An install can be cancelled; it resumes where it stopped.
+- **Repair the runtime**: when runtime files go missing (a folder deleted by hand), the launcher notices within half a
+  minute and offers to download just those again. The wrench in the sidebar's bottom card reinstalls the whole runtime.
+  Instances and their data are kept.
+- **Show an instance's files in Finder** from its ⋯ menu. `soulx list --json` reports the folder as `files_dir`.
+
 ## v26.10.2 (2026-10-18)
 
 - Scripts: `load_image` opens relative paths from the script's folder, like templates, `screenshot`, `img:save` and

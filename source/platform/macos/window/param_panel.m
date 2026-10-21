@@ -100,10 +100,11 @@ enum { PANEL_LABEL_W = 116, PANEL_CONTROL_W = 150, PANEL_MAX_H = 460 };
     _panel.title = _title;
     _panel.delegate = self;                             // so closing the panel stops the script
     _panel.hidesOnDeactivate = NO;
-    _panel.floatingPanel = YES;
     _panel.becomesKeyOnlyIfNeeded = YES;            // editing a text field can focus it, but it won't steal focus
     _panel.releasedWhenClosed = NO;
-    _panel.level = NSFloatingWindowLevel;
+    // NSUtilityWindow panels default to floating (see _logPanel below for the same fix): say so explicitly, or
+    // it stays pinned above every window — including other apps' — instead of ordering normally.
+    _panel.floatingPanel = NO;
 
     _stack = [[NSStackView alloc] init];
     _stack.orientation = NSUserInterfaceLayoutOrientationVertical;

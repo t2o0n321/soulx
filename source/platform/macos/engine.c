@@ -1246,7 +1246,7 @@ int soulx_mac_start(const char* name, const SoulXStartOpts* opts, SoulXRunState*
     char avd[SOULX_NAME_MAX + 8], port_s[16];
     soulx_avd_name(c.name, avd, sizeof(avd));
     snprintf(port_s, sizeof(port_s), "%d", port);
-    const char* argv[32];
+    const char* argv[40];
     int n = 0;
     argv[n++] = emulator;
     argv[n++] = "-avd";
@@ -1272,6 +1272,12 @@ int soulx_mac_start(const char* name, const SoulXStartOpts* opts, SoulXRunState*
         argv[n++] = "-Vulkan";
     }
     if (!c.audio) argv[n++] = "-no-audio";                 // no audio device at all, not just a silent one
+    // wlan0 runs on the engine's own WiFi, whose traffic goes through QEMU's "virtio-wifi" network backend: that is
+    // where network_capture.c attaches a recording on demand. The default (netsim) WiFi lives in netsimd, which serves all
+    // instances at once and cannot record a single radio while it runs. The guest sees the same "AndroidWifi" either
+    // way. Listed before the diagnostic features below so that SOULX_ENGINE_FEATURES can still switch it back.
+    argv[n++] = "-feature";
+    argv[n++] = "-WiFiPacketStream";
     // Diagnostics: SOULX_ENGINE_FEATURES="-GLAsyncSwap,Foo" adds engine feature switches for this start.
     char features[256] = "";
     const char* fe = getenv("SOULX_ENGINE_FEATURES");
@@ -1281,6 +1287,15 @@ int soulx_mac_start(const char* name, const SoulXStartOpts* opts, SoulXRunState*
             argv[n++] = "-feature";
             argv[n++] = tok;
         }
+    }
+    // QMP socket for network_capture.c. Last, because everything after -qemu goes to QEMU itself.
+    char qmp[PATH_MAX + 32];
+    if (soulx_mac_network_capture_qmp_arg(c.name, qmp, sizeof(qmp)) == 0) {
+        argv[n++] = "-qemu";
+        argv[n++] = "-qmp";
+        argv[n++] = qmp;
+    } else {
+        soulx_log(SOULX_LOG_DEBUG, "'%s' gets no capture channel (its socket path is too long)", c.name);
     }
     argv[n] = NULL;
     log_argv(argv);
@@ -1381,6 +1396,9 @@ int soulx_mac_stop(const char* name, bool force) {
         soulx_log(SOULX_LOG_INFO, "'%s' is not running", c.name);
         soulx_mac_cleanup_idle();                         // its engine may have exited by itself; adb did not
         return 0;
+    }
+    if (st.network_capture_path[0]) {                                // close the capture file properly first
+        soulx_mac_network_capture_stop(c.name, NULL, 0);
     }
 
     EngineId id = engine_id(st.pid);

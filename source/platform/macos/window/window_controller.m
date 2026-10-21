@@ -36,9 +36,15 @@
 
 extern char** environ;
 
-#define TOOLBAR_WIDTH           128.0
-#define COLLAPSED_WIDTH         0.0         // collapsed = toolbar fully hidden; the title-bar button brings it back
+#define TOOLBAR_WIDTH           192.0       // the column right of the screen; the toolbar card sits inside it
+#define RAIL_INSET              8.0         // gap between the card and the column's edges
+#define RAIL_PAD                12.0        // the card's own inner padding
+#define RAIL_INNER              (TOOLBAR_WIDTH - 2 * RAIL_INSET - 2 * RAIL_PAD)
+#define COLLAPSED_WIDTH         8.0         // collapsed = toolbar fully hidden; the title-bar button brings it back
 #define STATUS_HEIGHT           24.0
+#define SCREEN_INSET            8.0         // the Android screen sits inset in the window, with rounded corners
+#define SCREEN_RADIUS           12.0
+#define VERT_CHROME             (STATUS_HEIGHT + 2 * SCREEN_INSET)   // window height that is not the screen
 #define INITIAL_HEIGHT_SHARE    0.85        // of the screen's visible height
 #define MIN_SCREEN_SIDE         200.0
 #define LOG_MAX_CHARS           (1024 * 1024)
@@ -207,12 +213,14 @@ static NSString* decode_chunk(NSMutableData* pending) {
     NSRect b = self.bounds;
     CGFloat screenW = self.fixedScreenWidth > 0
         ? self.fixedScreenWidth
-        : b.size.width - (self.toolbarCollapsed ? COLLAPSED_WIDTH : TOOLBAR_WIDTH);
-    screenW = fmax(fmin(screenW, b.size.width - 1), 1);
-    NSRect screen = NSMakeRect(0, STATUS_HEIGHT, screenW, fmax(b.size.height - STATUS_HEIGHT, 1));
+        : b.size.width - SCREEN_INSET - (self.toolbarCollapsed ? COLLAPSED_WIDTH : TOOLBAR_WIDTH);
+    screenW = fmax(fmin(screenW, b.size.width - SCREEN_INSET - 1), 1);
+    NSRect screen = NSMakeRect(SCREEN_INSET, STATUS_HEIGHT + SCREEN_INSET, screenW, fmax(b.size.height - VERT_CHROME, 1));
     self.screen.frame = screen;
     self.flash.frame = screen;
-    self.toolbar.frame = NSMakeRect(NSMaxX(screen), STATUS_HEIGHT, fmax(b.size.width - screenW, 0), screen.size.height);
+    NSRect column = NSMakeRect(NSMaxX(screen), STATUS_HEIGHT, fmax(b.size.width - NSMaxX(screen), 0),
+                               fmax(b.size.height - STATUS_HEIGHT, 0));
+    self.toolbar.frame = column.size.width > 2 * RAIL_INSET ? NSInsetRect(column, RAIL_INSET, RAIL_INSET) : NSZeroRect;
     self.status.frame = NSMakeRect(0, 0, b.size.width, STATUS_HEIGHT);
     NSSize ns = self.notice.fittingSize;
     CGFloat nw = fmin(fmax(ns.width, 240), fmax(screen.size.width - 24, 120));
@@ -352,6 +360,74 @@ static NSString* decode_chunk(NSMutableData* pending) {
 @end
 
 // ---------------------------------------------------------------------------
+// Navigation tile: a square-ish button, icon over its label, on a faint rounded plate (Back / Home / ...).
+// ---------------------------------------------------------------------------
+
+#define TILE_HEIGHT       50.0
+
+@interface SoulXNavTile : NSButton
+@end
+
+@implementation SoulXNavTile {
+    BOOL _hover;
+    NSTrackingArea* _track;
+}
+
+- (void)updateTrackingAreas {
+    [super updateTrackingAreas];
+    if (_track) [self removeTrackingArea:_track];
+    _track = [[NSTrackingArea alloc] initWithRect:self.bounds
+              options:NSTrackingMouseEnteredAndExited | NSTrackingActiveInKeyWindow | NSTrackingInVisibleRect
+                owner:self userInfo:nil];
+    [self addTrackingArea:_track];
+}
+
+- (void)mouseEntered:(NSEvent*)e { (void)e; _hover = YES; self.needsDisplay = YES; }
+- (void)mouseExited:(NSEvent*)e  { (void)e; _hover = NO;  self.needsDisplay = YES; }
+- (void)setTitle:(NSString*)t    { [super setTitle:t]; self.needsDisplay = YES; }
+- (void)setEnabled:(BOOL)e       { [super setEnabled:e]; self.needsDisplay = YES; }
+
+- (void)drawRect:(NSRect)dirty {
+    (void)dirty;
+    NSRect b = NSInsetRect(self.bounds, 0.5, 0.5);
+    BOOL on = self.isEnabled;
+    CGFloat fill = self.isHighlighted ? 0.16 : ((_hover && on) ? 0.11 : 0.06);
+    NSBezierPath* plate = [NSBezierPath bezierPathWithRoundedRect:b xRadius:11 yRadius:11];
+    [[NSColor.labelColor colorWithAlphaComponent:fill] setFill];
+    [plate fill];
+    [[NSColor.labelColor colorWithAlphaComponent:0.09] setStroke];
+    plate.lineWidth = 1;
+    [plate stroke];
+
+    NSColor* fg = on ? NSColor.labelColor : NSColor.tertiaryLabelColor;
+    NSDictionary* attrs = @{ NSFontAttributeName: [NSFont systemFontOfSize:11 weight:NSFontWeightMedium],
+                             NSForegroundColorAttributeName: fg };
+    NSString* t = self.title ? self.title : @"";
+    NSSize ts = [t sizeWithAttributes:attrs];
+    CGFloat iconH = 17, gap = 4;
+    CGFloat top = round((self.bounds.size.height - iconH - gap - ts.height) / 2);
+    if (self.image) {
+        NSImageSymbolConfiguration* cfg =
+            [[NSImageSymbolConfiguration configurationWithPointSize:15 weight:NSFontWeightRegular]
+                configurationByApplyingConfiguration:[NSImageSymbolConfiguration configurationWithPaletteColors:@[ fg ]]];
+        NSImage* icon = [self.image imageWithSymbolConfiguration:cfg];
+        if (!icon) icon = self.image;
+        NSSize is = icon.size;
+        CGFloat scale = fmin(1.0, iconH / fmax(is.height, 1));
+        NSSize ds = NSMakeSize(is.width * scale, is.height * scale);
+        NSRect ir = NSMakeRect(round((self.bounds.size.width - ds.width) / 2), top + round((iconH - ds.height) / 2),
+                               ds.width, ds.height);
+        [icon drawInRect:ir fromRect:NSZeroRect operation:NSCompositingOperationSourceOver fraction:1.0
+          respectFlipped:YES hints:nil];
+    }
+    [t drawAtPoint:NSMakePoint(round((self.bounds.size.width - ts.width) / 2), top + iconH + gap) withAttributes:attrs];
+}
+
+- (BOOL)isFlipped { return YES; }
+
+@end
+
+// ---------------------------------------------------------------------------
 // SoulXWindowController
 // ---------------------------------------------------------------------------
 
@@ -386,6 +462,8 @@ static NSString* decode_chunk(NSMutableData* pending) {
     NSButton* _collapseButton;           // sidebar toggle in the window title bar
     NSMutableDictionary<NSString*, NSButton*>* _buttons;
     NSSlider* _volumeSlider;             // output volume control in the sidebar
+    NSTextField* _volumeValue;           // its level as a percentage, beside the "Volume" heading
+    NSView* _volumeCard;                 // the plate around the volume controls
     double _volumeTouchedMs;             // when the user last moved the slider (polling waits a moment after)
     int _volumeTicks;
     NSMutableDictionary<NSString*, NSPopover*>* _flyoutPopovers;   // category ident -> its flyout
@@ -396,6 +474,7 @@ static NSString* decode_chunk(NSMutableData* pending) {
     NSTextField* _fpsLabel;
     NSTextField* _serialLabel;
     NSTextField* _rotationLabel;
+    NSTextField* _specLabel;             // resolution and orientation, right end of the status bar
     NSTextField* _jobLabel;
     NSTextField* _keymapLabel;
     NSTextField* _messageLabel;
@@ -473,13 +552,19 @@ static NSString* decode_chunk(NSMutableData* pending) {
     _screen = [[SoulXScreenView alloc] initWithConf:conf state:st];
     if (!_screen) return nil;
     _screen.owner = self;
+    _screen.wantsLayer = YES;
+    _screen.layer.cornerRadius = SCREEN_RADIUS;
+    _screen.layer.cornerCurve = kCACornerCurveContinuous;
+    _screen.layer.masksToBounds = YES;
+    _screen.layer.borderWidth = 1;                       // a hairline edge, so the screen reads as a glass pane
+    _screen.layer.borderColor = [NSColor colorWithWhite:1 alpha:0.08].CGColor;
 
-    win.title = [NSString stringWithFormat:@"SoulX · %s · %@", conf->name, _android];
+    win.title = [NSString stringWithFormat:@"%s · %@", conf->name, _android];
     win.delegate = self;
     win.releasedWhenClosed = NO;
     win.collectionBehavior = NSWindowCollectionBehaviorFullScreenPrimary;
-    win.backgroundColor = NSColor.blackColor;
-    win.contentMinSize = NSMakeSize(TOOLBAR_WIDTH + MIN_SCREEN_SIDE, STATUS_HEIGHT + MIN_SCREEN_SIDE);
+    win.backgroundColor = NSColor.windowBackgroundColor;     // shows around the inset, rounded screen
+    win.contentMinSize = NSMakeSize(SCREEN_INSET + TOOLBAR_WIDTH + MIN_SCREEN_SIDE, VERT_CHROME + MIN_SCREEN_SIDE);
     win.tabbingMode = NSWindowTabbingModeDisallowed;
 
     _content = [[SoulXContentView alloc] initWithFrame:NSMakeRect(0, 0, 480, 900)];
@@ -490,16 +575,18 @@ static NSString* decode_chunk(NSMutableData* pending) {
     NSView* flash = [[NSView alloc] initWithFrame:NSZeroRect];
     flash.wantsLayer = YES;
     flash.layer.backgroundColor = NSColor.whiteColor.CGColor;
+    flash.layer.cornerRadius = SCREEN_RADIUS;            // the screenshot flash follows the rounded screen
     flash.alphaValue = 0;
     _content.flash = flash;
     for (NSView* v in @[ _screen, _content.toolbar, _content.status, flash, _content.notice ]) [_content addSubview:v];
     win.contentView = _content;
     [self installTitlebarToggle];
+    [self installCenteredTitle];
     [self applyToolbarCollapsed:[[NSUserDefaults standardUserDefaults] boolForKey:@"SoulXToolbarCollapsed"]];
     __weak SoulXWindowController* weakVol = self;
     [_screen readMusicVolumeThen:^(int v) {            // show the real output level on the slider
         SoulXWindowController* s = weakVol;
-        if (s && v >= 0) s->_volumeSlider.integerValue = v;
+        if (s && v >= 0) { s->_volumeSlider.integerValue = v; [s showVolumeValue]; }
     }];
 
     [_content registerForDraggedTypes:@[ NSPasteboardTypeFileURL ]];
@@ -548,23 +635,79 @@ static NSString* decode_chunk(NSMutableData* pending) {
     return b;
 }
 
-- (NSView*)buildToolbar {
-    NSVisualEffectView* bar = [[NSVisualEffectView alloc] initWithFrame:NSMakeRect(0, 0, TOOLBAR_WIDTH, 400)];
-    bar.material = NSVisualEffectMaterialSidebar;
-    bar.blendingMode = NSVisualEffectBlendingModeBehindWindow;
-    bar.state = NSVisualEffectStateFollowsWindowActiveState;
+- (NSButton*)navTile:(NSString*)ident title:(NSString*)title symbol:(NSString*)symbol tip:(NSString*)tip
+               action:(SEL)action {
+    SoulXNavTile* b = [[SoulXNavTile alloc] initWithFrame:NSZeroRect];
+    b.image = [NSImage imageWithSystemSymbolName:symbol accessibilityDescription:title];
+    b.title = title;
+    b.target = self;
+    b.action = action;
+    b.bordered = NO;
+    b.focusRingType = NSFocusRingTypeNone;
+    b.toolTip = tip;
+    b.identifier = ident;
+    b.translatesAutoresizingMaskIntoConstraints = NO;
+    [b.heightAnchor constraintEqualToConstant:TILE_HEIGHT].active = YES;
+    _buttons[ident] = b;
+    return b;
+}
 
-    NSButton* rotate = [self toolButton:@"rotate" title:SoulXText(@"Rotate") symbol:@"rotate.right"
-                                    tip:SoulXText(@"Rotate the screen") action:@selector(soulxRotate:)];
-    NSArray* nav = @[
-        [self toolButton:@"back" title:SoulXText(@"Back") symbol:@"chevron.backward"
-                     tip:SoulXText(@"Back (Esc or right-click)") action:@selector(soulxBack:)],
-        [self toolButton:@"home" title:SoulXText(@"Home") symbol:@"house"
-                     tip:SoulXText(@"Home") action:@selector(soulxHome:)],
-        [self toolButton:@"recents" title:SoulXText(@"Recents") symbol:@"square.on.square"
-                     tip:SoulXText(@"Recent apps") action:@selector(soulxRecents:)],
-        rotate,
+// A small grey section heading in the toolbar ("Navigation", "Tools", "Volume").
+- (NSTextField*)toolbarHeading:(NSString*)text {
+    NSTextField* l = [NSTextField labelWithString:text];
+    l.font = [NSFont systemFontOfSize:11 weight:NSFontWeightSemibold];
+    l.textColor = NSColor.secondaryLabelColor;
+    return l;
+}
+
+// The volume slider's level as a percentage (the slider holds Android's 0...15 steps).
+- (void)showVolumeValue {
+    double max = _volumeSlider.maxValue > 0 ? _volumeSlider.maxValue : 15;
+    _volumeValue.stringValue = [NSString stringWithFormat:@"%d%%", (int)lround(_volumeSlider.doubleValue * 100.0 / max)];
+}
+
+- (NSView*)buildToolbar {
+    // A rounded card floating in the column right of the screen: Liquid Glass on macOS 26 (as the launcher),
+    // else a faint plate (NSBox: its colours follow light / dark).
+    NSRect cardFrame = NSMakeRect(0, 0, TOOLBAR_WIDTH - 2 * RAIL_INSET, 400);
+    NSView* card;
+    NSView* bar;
+    if (@available(macOS 26.0, *)) {
+        NSGlassEffectView* glass = [[NSGlassEffectView alloc] initWithFrame:cardFrame];
+        glass.cornerRadius = 16;
+        bar = [[NSView alloc] initWithFrame:cardFrame];
+        glass.contentView = bar;
+        card = glass;
+    } else {
+        NSBox* box = [[NSBox alloc] initWithFrame:cardFrame];
+        box.boxType = NSBoxCustom;
+        box.titlePosition = NSNoTitle;
+        box.cornerRadius = 16;
+        box.borderWidth = 1;
+        box.fillColor = [NSColor.labelColor colorWithAlphaComponent:0.055];
+        box.borderColor = [NSColor.labelColor colorWithAlphaComponent:0.09];
+        box.contentViewMargins = NSZeroSize;
+        bar = box.contentView;
+        card = box;
+    }
+
+    // Navigation: four tiles, two by two.
+    NSArray<NSButton*>* nav = @[
+        [self navTile:@"back" title:SoulXText(@"Back") symbol:@"chevron.backward"
+                  tip:SoulXText(@"Back (Esc or right-click)") action:@selector(soulxBack:)],
+        [self navTile:@"home" title:SoulXText(@"Home") symbol:@"house"
+                  tip:SoulXText(@"Home") action:@selector(soulxHome:)],
+        [self navTile:@"recents" title:SoulXText(@"Recents") symbol:@"square.on.square"
+                  tip:SoulXText(@"Recent apps") action:@selector(soulxRecents:)],
+        [self navTile:@"rotate" title:SoulXText(@"Rotate") symbol:@"rotate.right"
+                  tip:SoulXText(@"Rotate the screen") action:@selector(soulxRotate:)],
     ];
+    NSGridView* navGrid = [NSGridView gridViewWithViews:@[ @[ nav[0], nav[1] ], @[ nav[2], nav[3] ] ]];
+    navGrid.rowSpacing = 8;
+    navGrid.columnSpacing = 8;
+    navGrid.translatesAutoresizingMaskIntoConstraints = NO;
+    CGFloat tileW = (RAIL_INNER - 8) / 2;
+    for (NSButton* t in nav) [t.widthAnchor constraintEqualToConstant:tileW].active = YES;
     // Grouped tools: each category opens a small flyout to the RIGHT on hover (closes when the mouse leaves).
     // Sub-buttons are real SoulXToolRows in _buttons, so setJobButtons / setVideoButton still style them.
     NSPopover* appsPop = [self flyoutPopoverWith:@[
@@ -605,41 +748,73 @@ static NSString* decode_chunk(NSMutableData* pending) {
     divider.boxType = NSBoxSeparator;
     divider.translatesAutoresizingMaskIntoConstraints = NO;
 
-    NSMutableArray<NSView*>* views = [nav mutableCopy];
-    [views addObject:divider];
+    NSTextField* navHead = [self toolbarHeading:SoulXText(@"Navigation")];
+    NSTextField* toolsHead = [self toolbarHeading:SoulXText(@"Tools")];
+    NSMutableArray<NSView*>* views = [@[ navHead, navGrid, divider, toolsHead ] mutableCopy];
     [views addObjectsFromArray:cats];
-
-    // Output-volume control (speaker + slider) at the bottom of the tool list.
-    NSImageView* spk = [NSImageView imageViewWithImage:
-        [NSImage imageWithSystemSymbolName:@"speaker.wave.2.fill" accessibilityDescription:SoulXText(@"Volume")]];
-    spk.contentTintColor = NSColor.secondaryLabelColor;
-    _volumeSlider = [NSSlider sliderWithValue:10 minValue:0 maxValue:15 target:self action:@selector(volumeChanged:)];
-    _volumeSlider.numberOfTickMarks = 16;
-    _volumeSlider.allowsTickMarkValuesOnly = YES;
-    _volumeSlider.controlSize = NSControlSizeSmall;
-    _volumeSlider.continuous = YES;                     // set live while dragging (each set is instant)
-    _volumeSlider.toolTip = SoulXText(@"Output volume");
-    NSStackView* volRow = [NSStackView stackViewWithViews:@[ spk, _volumeSlider ]];
-    volRow.orientation = NSUserInterfaceLayoutOrientationHorizontal;
-    volRow.spacing = 6;
-    [_volumeSlider.widthAnchor constraintEqualToConstant:TOOLBAR_WIDTH - 44].active = YES;
-    [views addObject:volRow];
 
     _tools = [NSStackView stackViewWithViews:views];
     _tools.orientation = NSUserInterfaceLayoutOrientationVertical;
     _tools.alignment = NSLayoutAttributeLeading;
     _tools.spacing = 2;
     _tools.translatesAutoresizingMaskIntoConstraints = NO;
-    [_tools setCustomSpacing:10 afterView:rotate];       // breathing room around the group divider
-    [_tools setCustomSpacing:10 afterView:divider];
-    [_tools setCustomSpacing:16 afterView:lastCat];   // gap above the volume slider
+    [_tools setCustomSpacing:8 afterView:navHead];
+    [_tools setCustomSpacing:14 afterView:navGrid];       // breathing room around the group divider
+    [_tools setCustomSpacing:12 afterView:divider];
+    [_tools setCustomSpacing:6 afterView:toolsHead];
     [bar addSubview:_tools];
-    [divider.widthAnchor constraintEqualToConstant:TOOLBAR_WIDTH - 24].active = YES;
+    [divider.widthAnchor constraintEqualToConstant:RAIL_INNER].active = YES;
     [NSLayoutConstraint activateConstraints:@[
-        [_tools.topAnchor constraintEqualToAnchor:bar.topAnchor constant:12],
-        [_tools.leadingAnchor constraintEqualToAnchor:bar.leadingAnchor constant:6],
+        [_tools.topAnchor constraintEqualToAnchor:bar.topAnchor constant:RAIL_PAD],
+        [_tools.leadingAnchor constraintEqualToAnchor:bar.leadingAnchor constant:RAIL_PAD],
     ]];
-    return bar;
+
+    // Volume: a small card pinned to the bottom of the toolbar — heading and level, then speaker + slider.
+    NSImageView* spk = [NSImageView imageViewWithImage:
+        [NSImage imageWithSystemSymbolName:@"speaker.wave.2.fill" accessibilityDescription:SoulXText(@"Volume")]];
+    spk.contentTintColor = NSColor.secondaryLabelColor;
+    _volumeSlider = [NSSlider sliderWithValue:10 minValue:0 maxValue:15 target:self action:@selector(volumeChanged:)];
+    _volumeSlider.controlSize = NSControlSizeSmall;
+    _volumeSlider.trackFillColor = NSColor.controlAccentColor;   // the level as a blue bar
+    _volumeSlider.continuous = YES;                     // set live while dragging (each set is instant)
+    _volumeSlider.toolTip = SoulXText(@"Output volume");
+    _volumeValue = [NSTextField labelWithString:@""];
+    _volumeValue.font = [NSFont monospacedDigitSystemFontOfSize:11 weight:NSFontWeightRegular];
+    _volumeValue.textColor = NSColor.secondaryLabelColor;
+    NSStackView* volHead = [NSStackView stackViewWithViews:@[ [self toolbarHeading:SoulXText(@"Volume")], _volumeValue ]];
+    volHead.distribution = NSStackViewDistributionEqualCentering;
+    NSStackView* volRow = [NSStackView stackViewWithViews:@[ spk, _volumeSlider ]];
+    volRow.spacing = 6;
+    NSStackView* volCard = [NSStackView stackViewWithViews:@[ volHead, volRow ]];
+    volCard.orientation = NSUserInterfaceLayoutOrientationVertical;
+    volCard.alignment = NSLayoutAttributeLeading;
+    volCard.spacing = 8;
+    volCard.edgeInsets = NSEdgeInsetsMake(10, 10, 10, 10);
+    volCard.wantsLayer = YES;
+    volCard.layer.cornerRadius = 11;
+    volCard.layer.borderWidth = 1;
+    volCard.translatesAutoresizingMaskIntoConstraints = NO;
+    [self paintVolumeCard:volCard];
+    [bar addSubview:volCard];
+    CGFloat inner = RAIL_INNER - 20;
+    [NSLayoutConstraint activateConstraints:@[
+        [volCard.leadingAnchor constraintEqualToAnchor:bar.leadingAnchor constant:RAIL_PAD],
+        [volCard.widthAnchor constraintEqualToConstant:RAIL_INNER],
+        [volCard.bottomAnchor constraintEqualToAnchor:bar.bottomAnchor constant:-RAIL_PAD],
+        [volHead.widthAnchor constraintEqualToConstant:inner],
+        [_volumeSlider.widthAnchor constraintEqualToConstant:inner - 26],
+    ]];
+    _volumeCard = volCard;
+    [self showVolumeValue];
+    return card;
+}
+
+// The card's plate follows light / dark: layer colours do not, so set them from the current appearance.
+- (void)paintVolumeCard:(NSView*)card {
+    [card.effectiveAppearance performAsCurrentDrawingAppearance:^{
+        card.layer.backgroundColor = [NSColor.labelColor colorWithAlphaComponent:0.05].CGColor;
+        card.layer.borderColor = [NSColor.labelColor colorWithAlphaComponent:0.08].CGColor;
+    }];
 }
 
 - (NSPopover*)flyoutPopoverWith:(NSArray<NSView*>*)buttons {
@@ -673,7 +848,7 @@ static NSString* decode_chunk(NSMutableData* pending) {
     b.action = @selector(categoryClicked:);
     b.translatesAutoresizingMaskIntoConstraints = NO;
     [b.heightAnchor constraintEqualToConstant:ROW_HEIGHT].active = YES;
-    [b.widthAnchor constraintEqualToConstant:TOOLBAR_WIDTH - 12].active = YES;
+    [b.widthAnchor constraintEqualToConstant:RAIL_INNER].active = YES;
     if (!_flyoutPopovers) _flyoutPopovers = [NSMutableDictionary dictionary];
     _flyoutPopovers[ident] = pop;
     if (!_categoryButtons) _categoryButtons = [NSMutableDictionary dictionary];
@@ -752,10 +927,34 @@ static NSString* decode_chunk(NSMutableData* pending) {
     [self.window addTitlebarAccessoryViewController:vc];
 }
 
+// The title, centred over the whole window: the instance name in bold, the Android version after it in grey.
+- (void)installCenteredTitle {
+    NSWindow* win = self.window;
+    NSView* titlebar = [win standardWindowButton:NSWindowCloseButton].superview;
+    if (!titlebar) return;
+    win.titleVisibility = NSWindowTitleHidden;            // the real title stays for the Window menu / Mission Control
+    NSMutableAttributedString* t = [[NSMutableAttributedString alloc]
+        initWithString:@(_conf.name)
+            attributes:@{ NSFontAttributeName: [NSFont systemFontOfSize:13 weight:NSFontWeightSemibold],
+                          NSForegroundColorAttributeName: NSColor.labelColor }];
+    [t appendAttributedString:[[NSAttributedString alloc]
+        initWithString:[@"  " stringByAppendingString:_android]
+            attributes:@{ NSFontAttributeName: [NSFont systemFontOfSize:13],
+                          NSForegroundColorAttributeName: NSColor.secondaryLabelColor }]];
+    NSTextField* label = [NSTextField labelWithAttributedString:t];
+    label.translatesAutoresizingMaskIntoConstraints = NO;
+    [titlebar addSubview:label];
+    [NSLayoutConstraint activateConstraints:@[
+        [label.centerXAnchor constraintEqualToAnchor:titlebar.centerXAnchor],
+        [label.centerYAnchor constraintEqualToAnchor:[win standardWindowButton:NSWindowCloseButton].centerYAnchor],
+    ]];
+}
+
 // Collapse or expand the right-hand toolbar: set the state and the chevron, but do not lay out (callers do).
 - (void)applyToolbarCollapsed:(BOOL)collapsed {
     _content.toolbarCollapsed = collapsed;
     _tools.hidden = collapsed;
+    _volumeCard.hidden = collapsed;
     NSImage* img = [NSImage imageWithSystemSymbolName:(collapsed ? @"sidebar.left" : @"sidebar.right")
                                 accessibilityDescription:nil];
     if (img) _collapseButton.image = img;
@@ -813,9 +1012,7 @@ static NSString* decode_chunk(NSMutableData* pending) {
 }
 
 - (NSView*)buildStatusBar {
-    NSVisualEffectView* bar = [[NSVisualEffectView alloc] initWithFrame:NSMakeRect(0, 0, 400, STATUS_HEIGHT)];
-    bar.material = NSVisualEffectMaterialTitlebar;
-    bar.blendingMode = NSVisualEffectBlendingModeWithinWindow;
+    NSView* bar = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 400, STATUS_HEIGHT)];   // on the window's own background
     _fpsLabel = [self statusLabel];
     _serialLabel = [self statusLabel];
     _rotationLabel = [self statusLabel];
@@ -842,10 +1039,15 @@ static NSString* decode_chunk(NSMutableData* pending) {
     row.detachesHiddenViews = YES;
     row.translatesAutoresizingMaskIntoConstraints = NO;
     [bar addSubview:row];
+    _specLabel = [self statusLabel];                    // "1080p · Portrait", at the right end
+    _specLabel.translatesAutoresizingMaskIntoConstraints = NO;
+    [bar addSubview:_specLabel];
     [NSLayoutConstraint activateConstraints:@[
-        [row.leadingAnchor constraintEqualToAnchor:bar.leadingAnchor],
-        [row.trailingAnchor constraintLessThanOrEqualToAnchor:bar.trailingAnchor],
+        [row.leadingAnchor constraintEqualToAnchor:bar.leadingAnchor constant:SCREEN_INSET - 10 + 8],
+        [row.trailingAnchor constraintLessThanOrEqualToAnchor:_specLabel.leadingAnchor constant:-8],
         [row.centerYAnchor constraintEqualToAnchor:bar.centerYAnchor],
+        [_specLabel.trailingAnchor constraintEqualToAnchor:bar.trailingAnchor constant:-(SCREEN_INSET + 8)],
+        [_specLabel.centerYAnchor constraintEqualToAnchor:bar.centerYAnchor],
     ]];
     return bar;
 }
@@ -882,13 +1084,13 @@ static NSString* decode_chunk(NSMutableData* pending) {
 // ---------------------------------------------------------------------------
 
 - (CGFloat)toolbarWidth {
-    return _content.toolbarCollapsed ? COLLAPSED_WIDTH : TOOLBAR_WIDTH;
+    return SCREEN_INSET + (_content.toolbarCollapsed ? COLLAPSED_WIDTH : TOOLBAR_WIDTH);   // all width that is not the screen
 }
 
 - (NSSize)contentSizeForScreenHeight:(CGFloat)h {
     NSSize ls = _screen.logicalSize;
     if (ls.width < 1 || ls.height < 1) ls = NSMakeSize(9, 16);
-    return NSMakeSize(round(h * ls.width / ls.height) + [self toolbarWidth], round(h) + STATUS_HEIGHT);
+    return NSMakeSize(round(h * ls.width / ls.height) + [self toolbarWidth], round(h) + VERT_CHROME);
 }
 
 // Resizes the window so that its screen area is h points high (shrunk to fit the visible frame); keeps the
@@ -902,7 +1104,7 @@ static NSString* decode_chunk(NSMutableData* pending) {
     NSRect fr = [win frameRectForContentRect:NSMakeRect(0, 0, cs.width, cs.height)];
     double fit = fmin(1.0, fmin(vf.size.width / fr.size.width, vf.size.height / fr.size.height));
     if (fit < 1.0) {
-        CGFloat chrome = fr.size.height - cs.height + STATUS_HEIGHT;
+        CGFloat chrome = fr.size.height - cs.height + VERT_CHROME;
         CGFloat avail_h = vf.size.height - chrome;
         CGFloat avail_w = vf.size.width - (fr.size.width - cs.width) - [self toolbarWidth];
         NSSize ls = _screen.logicalSize;
@@ -931,7 +1133,7 @@ static NSString* decode_chunk(NSMutableData* pending) {
     NSScreen* scr = win.screen ? win.screen : NSScreen.mainScreen;
     NSRect vf = scr ? scr.visibleFrame : NSMakeRect(0, 0, 1440, 900);
     NSRect probe = [win frameRectForContentRect:NSMakeRect(0, 0, 100, 100)];
-    CGFloat chrome = probe.size.height - 100 + STATUS_HEIGHT;
+    CGFloat chrome = probe.size.height - 100 + VERT_CHROME;
     [self setScreenHeight:vf.size.height * INITIAL_HEIGHT_SHARE - chrome animate:animate center:center];
 }
 
@@ -942,7 +1144,7 @@ static NSString* decode_chunk(NSMutableData* pending) {
     CGFloat tw = [self toolbarWidth];
     NSRect want = [win contentRectForFrameRect:NSMakeRect(0, 0, frameSize.width, frameSize.height)];
     NSRect cur = [win contentRectForFrameRect:win.frame];
-    CGFloat sw = want.size.width - tw, sh = want.size.height - STATUS_HEIGHT;
+    CGFloat sw = want.size.width - tw, sh = want.size.height - VERT_CHROME;
     if (fabs(want.size.width - cur.size.width) > fabs(want.size.height - cur.size.height)) {
         sh = sw * ls.height / ls.width;
     } else {
@@ -953,7 +1155,7 @@ static NSString* decode_chunk(NSMutableData* pending) {
         sw *= k;
         sh *= k;
     }
-    NSRect fr = [win frameRectForContentRect:NSMakeRect(0, 0, round(sw) + tw, round(sh) + STATUS_HEIGHT)];
+    NSRect fr = [win frameRectForContentRect:NSMakeRect(0, 0, round(sw) + tw, round(sh) + VERT_CHROME)];
     return fr.size;
 }
 
@@ -965,7 +1167,24 @@ static NSString* decode_chunk(NSMutableData* pending) {
     static const char* const degrees[4] = { "0°", "90°", "180°", "270°" };
     int r = _screen.rotation;
     _serialLabel.stringValue = @(_serial);
-    _rotationLabel.stringValue = @(degrees[r & 3]);
+    // rotation: a small rotate glyph before the angle
+    NSMutableAttributedString* rot = [[NSMutableAttributedString alloc] init];
+    NSImage* glyph = [NSImage imageWithSystemSymbolName:@"rotate.right" accessibilityDescription:nil];
+    if (glyph) {
+        NSTextAttachment* att = [[NSTextAttachment alloc] init];
+        att.image = [glyph imageWithSymbolConfiguration:
+                     [NSImageSymbolConfiguration configurationWithPointSize:10 weight:NSFontWeightRegular]];
+        [rot appendAttributedString:[NSAttributedString attributedStringWithAttachment:att]];
+        [rot appendAttributedString:[[NSAttributedString alloc] initWithString:@" "]];
+    }
+    [rot appendAttributedString:[[NSAttributedString alloc] initWithString:@(degrees[r & 3])]];
+    [rot addAttributes:@{ NSFontAttributeName: _rotationLabel.font, NSForegroundColorAttributeName: NSColor.secondaryLabelColor }
+                 range:NSMakeRange(0, rot.length)];
+    _rotationLabel.attributedStringValue = rot;
+    int shortSide = _conf.width < _conf.height ? _conf.width : _conf.height;
+    BOOL wide = _conf.landscape != ((r & 1) != 0);
+    _specLabel.stringValue = [NSString stringWithFormat:@"%dp · %@", shortSide,
+                              wide ? SoulXText(@"Landscape") : SoulXText(@"Portrait")];
     if (_job == JOB_RECORD) {
         _jobLabel.stringValue = [NSString stringWithFormat:SoulXText(@"● Recording %@"),
                                                            elapsed_text((soulx_now_ms() - _jobStartMs) / 1000.0)];
@@ -1027,7 +1246,7 @@ static NSString* decode_chunk(NSMutableData* pending) {
         __weak SoulXWindowController* weakVol = self;
         [_screen readMusicVolumeThen:^(int v) {
             SoulXWindowController* s = weakVol;
-            if (s && v >= 0 && soulx_now_ms() - s->_volumeTouchedMs > 2000) s->_volumeSlider.integerValue = v;
+            if (s && v >= 0 && soulx_now_ms() - s->_volumeTouchedMs > 2000) { s->_volumeSlider.integerValue = v; [s showVolumeValue]; }
         }];
     }
     if (_job == JOB_RECORD) {
@@ -1086,7 +1305,7 @@ static NSString* decode_chunk(NSMutableData* pending) {
     if (_lastAspect >= 0 && aspect != _lastAspect && !(self.window.styleMask & NSWindowStyleMaskFullScreen)) {
         // orientation flipped: same screen height, new width
         NSRect cr = [self.window contentRectForFrameRect:self.window.frame];
-        [self setScreenHeight:cr.size.height - STATUS_HEIGHT animate:YES center:NO];
+        [self setScreenHeight:cr.size.height - VERT_CHROME animate:YES center:NO];
     }
     _lastAspect = aspect;
 }
@@ -1384,6 +1603,17 @@ static NSString* decode_chunk(NSMutableData* pending) {
     _jobPath = [path copy];
     _jobStartMs = soulx_now_ms();
     _jobStopRequested = NO;
+    if (kind == JOB_RUN) {
+        // run/<name>.script: lets the launcher show which script is running (soulx_running_script), so its
+        // own Run button can show "Stop" and offer it without owning the process itself.
+        char dir[PATH_MAX], spath[PATH_MAX];
+        if (soulx_path(dir, sizeof(dir), "run") == 0 && soulx_mkdirs(dir) == 0 &&
+            soulx_path(spath, sizeof(spath), "run/%s.script", _conf.name) == 0) {
+            char body[PATH_MAX + 32];
+            int bn = snprintf(body, sizeof(body), "pid=%d\npath=%s\n", (int)pid, path.fileSystemRepresentation);
+            if (bn > 0 && (size_t)bn < sizeof(body)) soulx_write_file_atomic(spath, body, (size_t)bn);
+        }
+    }
     if (kind == JOB_RUN && _uiDir) {
         _paramPanel = [[SoulXParamPanel alloc] initWithDir:_uiDir title:SoulXText(@"Script parameters")
                                                      near:self.window];
@@ -1467,6 +1697,10 @@ static NSString* decode_chunk(NSMutableData* pending) {
     JobKind kind = _job;
     NSString* path = _jobPath;
     BOOL stopped = _jobStopRequested;
+    if (kind == JOB_RUN) {
+        char spath[PATH_MAX];
+        if (soulx_path(spath, sizeof(spath), "run/%s.script", _conf.name) == 0) unlink(spath);
+    }
     if (_jobExit) dispatch_source_cancel(_jobExit);
     _jobExit = nil;
     _jobRead = nil;                             // its handler drains the pipe to EOF, then closes it
@@ -1987,6 +2221,8 @@ static const double k_run_speeds[] = { 0.25, 0.5, 0.75, 1.0, 1.5, 2.0, 3.0, 5.0 
 - (void)volumeChanged:(id)sender {
     (void)sender;
     _volumeTouchedMs = soulx_now_ms();
+    _volumeSlider.integerValue = lround(_volumeSlider.doubleValue);   // Android's whole steps
+    [self showVolumeValue];
     [_screen setMusicVolume:(int)_volumeSlider.integerValue];   // absolute + instant; 0 = mute
 }
 
@@ -2186,6 +2422,23 @@ static const double k_run_speeds[] = { 0.25, 0.5, 0.75, 1.0, 1.5, 2.0, 3.0, 5.0 
     } else {
         [NSApp activateIgnoringOtherApps:YES];
     }
+}
+
+// The launcher's Run button asked this window to run one of the instance's scripts (app.m, kRunNotification):
+// same as picking it from the script flyout, so it gets the live parameter panel too. Silently does nothing when
+// a job is already running (the window is still brought forward so the user can see what's going on) or the
+// script has gone missing; startRun: already reports a missing "-- name:" line.
+- (void)requestRun:(NSString*)path {
+    if (_finished) return;
+    [self bringToFront];
+    if (_closing || _job != JOB_NONE || !path.length) return;
+    [self startRun:path askOptions:NO];
+}
+
+// Same as soulxStopScript: (Cmd-.), for the launcher's Stop button.
+- (void)requestStop {
+    if (_finished) return;
+    [self stopJob];
 }
 
 // ---------------------------------------------------------------------------

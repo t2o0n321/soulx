@@ -199,6 +199,10 @@ NSString* SoulXText(NSString* english) {
             @"Record Video": @[ @"錄製影片", @"录制视频" ],
             @"Stop Video": @[ @"停止錄影", @"停止录像" ],
             @"Volume": @[ @"音量", @"音量" ],
+            @"Portrait": @[ @"直向", @"竖屏" ],
+            @"Landscape": @[ @"橫向", @"横屏" ],
+            @"Navigation": @[ @"導覽", @"导览" ],
+            @"Tools": @[ @"工具", @"工具" ],
             @"Output volume": @[ @"輸出音量", @"输出音量" ],
             @"Apps": @[ @"應用", @"应用" ],
             @"Live": @[ @"已連線", @"已连接" ],
@@ -425,6 +429,9 @@ static int parse_options(const char* instance, int argc, char** argv, SoulXWindo
 #define WINDOW_CLAIM_POLL_MS    50
 
 static NSString* const kActivateNotification = @"com.soulx.window.activate";   // object: instance name
+// object: instance name, userInfo: {"path": the script's full path} (the launcher's Run button)
+static NSString* const kRunNotification = @"com.soulx.window.run";
+static NSString* const kStopNotification = @"com.soulx.window.stop";           // object: instance name (Stop button)
 
 static int s_lock_fd = -1;
 static char s_pid_path[PATH_MAX];
@@ -648,11 +655,25 @@ static void unwatch_signals(void) {
     [_controller bringToFront];
 }
 
+- (void)runRequest:(NSNotification*)note {
+    NSString* path = note.userInfo[@"path"];
+    if (path.length) [_controller requestRun:path];
+}
+
+- (void)stopRequest:(NSNotification*)note {
+    (void)note;
+    [_controller requestStop];
+}
+
 - (void)applicationDidFinishLaunching:(NSNotification*)note {
     (void)note;
     [self watchEngine];
     [[NSDistributedNotificationCenter defaultCenter] addObserver:self selector:@selector(activateRequest:)
                                                             name:kActivateNotification object:_instance];
+    [[NSDistributedNotificationCenter defaultCenter] addObserver:self selector:@selector(runRequest:)
+                                                            name:kRunNotification object:_instance];
+    [[NSDistributedNotificationCenter defaultCenter] addObserver:self selector:@selector(stopRequest:)
+                                                            name:kStopNotification object:_instance];
     [_controller showWindow:nil];
     if (@available(macOS 14.0, *)) {
         [NSApp activate];

@@ -411,6 +411,20 @@ int soulx_reg_load(const char* name, SoulXInstanceConf* out) {
     return 0;
 }
 
+int soulx_conf_parse(const char* text, const char* name, SoulXInstanceConf* out) {
+    if (!text || !out || !soulx_name_valid(name)) return -1;
+    char* data = strdup(text);
+    if (!data) return -1;
+    SoulXInstanceConf c;
+    soulx_conf_defaults(&c, name);
+    ConfParse cp = { &c, false, "instance.conf" };
+    parse_kv(data, conf_kv, &cp);
+    free(data);
+    snprintf(c.name, sizeof(c.name), "%s", name);      // the name is the caller's, never the file's
+    *out = c;
+    return 0;
+}
+
 // Highest id ever handed out (instances/.last_id), 0 when unknown.
 static int last_id_read(void) {
     char path[PATH_MAX];
@@ -658,6 +672,10 @@ static void state_kv(const char* key, const char* value, void* ctx) {
             field_ok(value, sizeof(sp->st->started), CHARSET_TIME)) {
             memcpy(sp->st->started, value, strlen(value) + 1);
         }
+    } else if (!strcmp(key, "network_capture_path")) {
+        if (strlen(value) < sizeof(sp->st->network_capture_path)) {
+            memcpy(sp->st->network_capture_path, value, strlen(value) + 1);
+        }
     }
 }
 
@@ -688,7 +706,7 @@ int soulx_state_load(const char* name, SoulXRunState* out) {
 
 int soulx_state_save(const char* name, const SoulXRunState* st) {
     if (!st || !soulx_name_valid(name) || st->pid <= 0 || st->port <= 0 || st->port > 65534 ||
-        !field_ok(st->started, sizeof(st->started), CHARSET_TIME)) {
+        !field_ok(st->started, sizeof(st->started), CHARSET_TIME) || strchr(st->network_capture_path, '\n')) {
         return -1;
     }
     char dir[PATH_MAX], path[PATH_MAX];
@@ -698,9 +716,9 @@ int soulx_state_save(const char* name, const SoulXRunState* st) {
         return -1;
     }
 
-    char body[256];
-    int n = snprintf(body, sizeof(body), "pid=%d\nport=%d\nheadless=%d\nstarted=%s\n",
-                     (int)st->pid, st->port, st->headless ? 1 : 0, st->started);
+    char body[1024 + 256];
+    int n = snprintf(body, sizeof(body), "pid=%d\nport=%d\nheadless=%d\nstarted=%s\nnetwork_capture_path=%s\n",
+                     (int)st->pid, st->port, st->headless ? 1 : 0, st->started, st->network_capture_path);
     if (n < 0 || (size_t)n >= sizeof(body)) return -1;
     if (soulx_write_file_atomic(path, body, (size_t)n) != 0) {
         soulx_log(SOULX_LOG_ERROR, "cannot write %s", path);

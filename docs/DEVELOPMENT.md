@@ -89,7 +89,7 @@ fakes stand in for the engine, adb and the console.
 | test | covers |
 |---|---|
 | `test_paths_proc` | `SOULX_HOME` paths, process spawning and environments |
-| `test_registry` | instance files, profiles, engine arguments, post-boot commands (lean, navigation) |
+| `test_registry` | instance files, profiles, engine arguments, post-boot commands (lean, navigation), network capture (against a fake QMP socket) |
 | `test_runtime` | runtime packages, downloads, ANGLE preparation |
 | `test_console` | the emulator console protocol |
 | `test_input`, `test_hidkbd` | touch and keyboard injection |
@@ -119,6 +119,7 @@ source/
     runtime.c               `soulx setup`: package downloads, SHA-1 checks, licenses, ANGLE preparation
     avd.c, registry.c       device definitions and instance settings (`instances/<name>.conf`)
     engine.c                starting/stopping the engine, GPU modes, post-boot commands
+    network_capture.c               network capture: the QMP client behind `network-capture-start` / `network-capture-stop`
     adb.c, console.c        private adb server, emulator console client
     input.c, hidkbd.c       multi-touch over the console, the virtual USB keyboard (uhid)
     screen.c                screenshots
@@ -190,6 +191,16 @@ with a marker property:
 
 The same file stops the screen from sleeping when `stay_awake=1`.
 
+**WiFi and network capture.** The engine runs with `-feature -WiFiPacketStream`, so `wlan0` uses the emulator's own
+WiFi (`virtio-wifi`, a QEMU `user` network backend) instead of netsim. `network-capture-start` talks QMP to `run/<name>.qmp`
+(the engine's `-qemu -qmp unix:...,server,nowait`) and adds a `filter-dump` object on the `virtio-wifi` backend with
+`object-add`; `network-capture-stop` removes it with `object-del`. QEMU writes the pcap itself, so nothing exists before or
+after. netsim cannot do this: its netsimd is shared by every running instance and only records everything from its
+start (`--pcap`); its frontend service (`PatchCapture`) is switched off in the emulator's build, even with
+`-feature NetsimCliUi` or `--dev`. The engine's `-tcpdump` and the console's `network capture` hook only `mynet`
+(`eth0`, cellular), which Android leaves idle while WiFi is up. A netsimd exits by itself within seconds of its last
+device going away, so SoulX does not stop it.
+
 **Why no Quick Boot.** Resuming a snapshot broke guest GPU sync objects: thousands of `glClientWaitSync` errors appeared,
 and the engine leaked memory without bound. A fresh boot stays flat.
 
@@ -200,6 +211,8 @@ and the engine leaked memory without bound. A fresh boot stays flat.
 - `SOULX_ENGINE_FEATURES=A,-B` passes `-feature A -feature -B` to the engine, for trying engine features without
   rebuilding.
 - `SOULX_HOME=/tmp/soulx-test` gives you a separate data folder, so experiments do not touch your instances.
+- `SOULX_ENGINE_FEATURES=WiFiPacketStream` runs an instance on netsim WiFi again (capture refuses to start). `info network`
+  through QMP (`human-monitor-command`) lists the backends; the built-in WiFi shows a `virtio-wifi-device` card.
 - `soulx console …` and `soulx adb …` reach the running engine directly. `adb shell dumpsys gfxinfo <package>` shows
   frame timings.
 - **Never attach lldb to a running engine.** With Hypervisor.framework, the engine dies ("unhandled exit"). Use
