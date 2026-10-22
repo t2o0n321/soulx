@@ -11,8 +11,13 @@ public struct CLIResult: Sendable {
         let text = stderr.isEmpty ? stdout : stderr
         return text.split(separator: "\n")
             .map { $0.replacingOccurrences(of: "soulx: error: ", with: "").replacingOccurrences(of: "soulx: ", with: "") }
-            .filter { !$0.hasPrefix("usage:") && !$0.hasPrefix("Run 'soulx help") }
+            .filter { line in
+                !line.hasPrefix("usage:") && !line.hasPrefix("Run 'soulx help") &&
+                !line.hasPrefix("| INFO") && !line.hasPrefix("| WARNING") && !line.hasPrefix("INFO") &&
+                !line.hasPrefix("WARNING") && !line.hasPrefix("USER_INFO")
+            }
             .joined(separator: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
 

@@ -254,6 +254,7 @@ void soulx_conf_defaults(SoulXInstanceConf* c, const char* name) {
     c->lean = true;
     c->fps = 60;
     c->audio = true;
+    c->rooted = false;
 }
 
 // Applies a profile; the panel keeps the orientation recorded in c->landscape.
@@ -368,6 +369,8 @@ static void conf_kv(const char* key, const char* value, void* ctx) {
         conf_set_int(&c->fps, key, value, 1, 240, cp->path);
     } else if (!strcmp(key, "audio")) {
         if (parse_bool(value, &b)) c->audio = b;
+    } else if (!strcmp(key, "rooted")) {
+        if (parse_bool(value, &b)) c->rooted = b;
     } else if (!strcmp(key, "created")) {
         conf_set_str(c->created, sizeof(c->created), key, value, CHARSET_TIME, cp->path);
     } else if (!strcmp(key, "last_port")) {
@@ -494,11 +497,12 @@ int soulx_reg_save(const SoulXInstanceConf* c) {
         "lean=%d\n"
         "fps=%d\n"
         "audio=%d\n"
+        "rooted=%d\n"
         "created=%s\n"
         "last_port=%d\n",
         c->id, c->name, c->image, c->cores, c->ram_mb, c->data_gb, c->width, c->height,
         c->dpi, c->landscape ? 1 : 0, c->gpu, c->dns, c->stay_awake ? 1 : 0, c->lean ? 1 : 0, c->fps,
-        c->audio ? 1 : 0, c->created,
+        c->audio ? 1 : 0, c->rooted ? 1 : 0, c->created,
         console_port_valid(c->last_port) ? c->last_port : 0);
     if (n < 0 || (size_t)n >= sizeof(body)) return -1;
 

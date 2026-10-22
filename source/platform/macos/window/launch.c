@@ -7,8 +7,8 @@
  * window first: a second 'soulx window <name>' activates the existing one and exits (window/app.m).
  *
  * soulx_window_running() reads the pid file run/<name>.window, which the window process writes itself (decimal
- * pid, "pid=<n>" also accepted). The pid counts only while it is alive, runs this very executable
- * (proc_pidpath == realpath of ours) and started before the pid file was written: a recycled pid that now
+ * pid, "pid=<n>" also accepted). The pid counts only while it is alive, runs a soulx executable (this one, or
+ * another copy such as SoulX.app's helper) and started before the pid file was written: a recycled pid that now
  * belongs to another soulx process (soulx run, soulx record...) fails the last check. The function never
  * modifies the pid file (the window process owns it), so it cannot race with a window that is starting.
  */
@@ -135,11 +135,16 @@ static pid_t read_pid_file(const char* path, struct timespec* mtime) {
     return (pid_t)v;
 }
 
-// proc_pidpath(pid) names the same file as |self| (string compare, then realpath, then device + inode).
+// proc_pidpath(pid) names the same file as |self| (string compare, then realpath, then device + inode), or another
+// copy of soulx (same file name): a window opened by SoulX.app's helper still belongs to the instance when a
+// development build or a second install asks. started_before() keeps a recycled pid out either way.
 static bool runs_executable(pid_t pid, const char* self) {
     char path[PROC_PIDPATHINFO_MAXSIZE];
     if (proc_pidpath(pid, path, sizeof(path)) <= 0) return false;
     if (strcmp(path, self) == 0) return true;
+    const char* pn = strrchr(path, '/');
+    const char* sn = strrchr(self, '/');
+    if (pn && sn && strcmp(pn, sn) == 0) return true;
     char real[PATH_MAX];
     if (realpath(path, real) && strcmp(real, self) == 0) return true;
     struct stat a, b;

@@ -13,10 +13,7 @@ struct BasicSettingsCard: View {
 
     var body: some View {
         SectionCard(L("Settings"), icon: "slider.horizontal.3") {
-            if locked {
-                StatusPill(text: L("Stop it to change these"), color: .orange, systemImage: "lock.fill")
-                    .help(L("Settings cannot change while the instance runs. Stop it to change them."))
-            }
+            if locked { lockMark }
         } content: {
             Group {
                 SettingRow(L("Performance")) {
@@ -161,6 +158,8 @@ struct DisplayCard: View {
 struct SystemCard: View {
     @Binding var settings: InstanceSettings
     var locked = false
+    var instance: Instance?
+    @EnvironmentObject var model: AppModel
 
     var body: some View {
         SectionCard(L("System"), icon: "server.rack") {
@@ -190,6 +189,35 @@ struct SystemCard: View {
                 }
             }
             .disabled(locked)
+            if let inst = instance {
+                rootToggle(inst)
+            }
+        }
+    }
+
+    @ViewBuilder private func rootToggle(_ inst: Instance) -> some View {
+        let rooted = inst.rooted
+        let busy = model.busy[inst.name] != nil
+        SettingRow(L("Root (Magisk)"), caption: rootCaption(inst)) {
+            Toggle("", isOn: Binding(
+                get: { rooted },
+                set: { enable in
+                    Task { await model.applyRoot(inst.name, enable: enable) }
+                }
+            ))
+            .labelsHidden().toggleStyle(.switch).controlSize(.small)
+            .disabled(busy || inst.running)
+        }
+    }
+
+    private func rootCaption(_ inst: Instance) -> String {
+        if model.busy[inst.name] != nil { return L("Grants root access via Magisk. Downloads and patches on first enable.") }
+        switch inst.rootStatus {
+        case "active": return L("Magisk root is active.")
+        case "ready": return L("Magisk root is ready. Start the instance to use it.")
+        case "inactive": return L("Root is enabled but Magisk is not active. Try restarting.")
+        case "missing": return L("Root is enabled but the ramdisk is missing. Toggle off and on to repair.")
+        default: return L("Grants root access via Magisk. Downloads and patches on first enable.")
         }
     }
 }

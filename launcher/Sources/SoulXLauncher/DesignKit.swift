@@ -56,6 +56,21 @@ enum Metrics {
     static let listDetail: CGFloat = 10
 }
 
+extension View {
+    /// A small green dot on an icon's top-right corner: the app is in front, the script is running.
+    func activeDot(_ on: Bool, help: String = "") -> some View {
+        overlay(alignment: .topTrailing) {
+            if on {
+                Circle().fill(Color.green)
+                    .frame(width: 8, height: 8)
+                    .overlay(Circle().strokeBorder(Color.black.opacity(0.35), lineWidth: 1.5))
+                    .offset(x: 3, y: -3)
+                    .help(help)
+            }
+        }
+    }
+}
+
 /// The SoulX mark: a phone on the blue-to-teal tile.
 struct AppMark: View {
     var size: CGFloat = 30

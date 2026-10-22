@@ -5,6 +5,14 @@ scripts/versioning/ turn it into the release's section, which becomes the text o
 
 ## Unreleased
 
+## v26.10.4 (2026-10-22)
+
+- **One-click Magisk root**: `soulx root <instance>` patches the boot ramdisk with Magisk v31.0 in a single pass
+  (7 steps, no second reboot). Root is active from the first boot after patching. The binary-patched `libmagisk.so`
+  ensures `su` authorization works without manual database setup.
+- Rooted instances automatically set up the Magisk environment (`/data/adb/magisk/` tools and shell root policy)
+  on every boot, so the environment stays correct even after data changes.
+
 ## v26.10.3 (2026-10-21)
 
 - **Network capture**: record an instance's WiFi traffic to a `.pcap` file for Wireshark whenever you want, without a

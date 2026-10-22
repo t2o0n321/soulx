@@ -275,6 +275,7 @@ typedef struct {
                                  // background apps (post-boot; off enables those apps again)
     int  fps;                    // guest display refresh rate (hw.lcd.vsync), 20-60: games render at most this often
     bool audio;                  // sound output (hw.audioOutput); off saves the audio thread's CPU
+    bool rooted;                 // Magisk root: boot with a patched ramdisk (magisk-ramdisk.img in AVD dir)
     char created[32];            // ISO-8601 UTC
     int  last_port;              // console port of the previous run (0 = none); soulx_mac_start tries it first so
                                  // the adb serial stays stable across stop/start (persisted as last_port=)
@@ -387,6 +388,20 @@ int soulx_mac_network_capture_start(const char* instance, char* dest_out, size_t
                                                        // (optional) gets that path
 int soulx_mac_network_capture_stop(const char* instance, char* dest_out, size_t cap);
                                                        // closes the file; dest_out (optional) gets its path
+
+// ---------------------------------------------------------------------------
+// magisk.c - Magisk root: download, verify, patch ramdisk
+// ---------------------------------------------------------------------------
+
+#define SOULX_MAGISK_VERSION   "31.0"
+#define SOULX_MAGISK_DIR       "sdk/magisk"    // relative to $SOULX_HOME
+#define SOULX_MAGISK_RAMDISK   "magisk-ramdisk.img"
+
+int  soulx_magisk_ensure_tools(void);          // download APK + extract arm64 tools if missing; 0 ok
+bool soulx_magisk_tools_ok(void);              // true when the tool set passes integrity checks
+int  soulx_magisk_patch(const char* name);     // patch the instance's ramdisk and set rooted=1; 0 ok
+int  soulx_magisk_unpatch(const char* name);   // remove the patched ramdisk (the data partition is untouched)
+int  soulx_magisk_verify(const char* name);    // verify root is working: adb su test on running instance
 
 // ---------------------------------------------------------------------------
 // apps.c - APK inspection, install, launch

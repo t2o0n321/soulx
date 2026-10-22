@@ -89,9 +89,17 @@ struct ContentView: View {
         .sheet(isPresented: $updates.showSheet) { UpdateSheet().interactiveDismissDisabled(updates.busy) }
         .alert(L("Error"), isPresented: Binding(get: { model.alert != nil }, set: { if !$0 { model.alert = nil } })) {
             Button(L("OK")) { model.alert = nil }
-        } message: { Text(model.alert ?? "") }
+        } message: { Text(alertMessage) }
         .task { await model.loadLanguage(); await model.loadMcp(); model.startPolling(); updates.start() }
         .id(model.language)                         // redraw every text in the new language
+    }
+
+    private var alertMessage: String {
+        guard let msg = model.alert, !msg.isEmpty else { return "" }
+        let lines = msg.split(separator: "\n", omittingEmptySubsequences: false)
+        if lines.count <= 4 && msg.count <= 300 { return msg }
+        let kept = lines.suffix(4).joined(separator: "\n")
+        return kept.count > 300 ? String(kept.prefix(300)) + "…" : kept
     }
 
     private var brand: some View {
@@ -261,7 +269,7 @@ struct InstanceDetailView: View {
                     VStack(spacing: Self.gap) {
                         AppsSection(instance: instance)
                         ScriptsSection(instance: instance)
-                        SystemCard(settings: $edited, locked: instance.running)
+                        SystemCard(settings: $edited, locked: instance.running, instance: instance)
                     }
                     VStack(spacing: Self.gap) {
                         BasicSettingsCard(settings: $edited,
@@ -282,6 +290,9 @@ struct InstanceDetailView: View {
         .navigationTitle(instance.name)
         .hiddenToolbarTitle()
         .onChange(of: instance) { _, new in
+            // rooted is driven by the Root toggle (immediate action), not the Apply flow —
+            // keep edited.rooted in sync so it never shows as a dirty change
+            edited.rooted = new.rooted
             // follow changes made elsewhere; once it runs, unapplied edits are dropped (they could not apply now)
             if edited == instance.settings || new.running { edited = new.settings }
             if new.running { note = nil }
@@ -337,8 +348,12 @@ struct InstanceDetailView: View {
     private var specLine: String {
         let s = instance.settings
         let res = s.resolution == .custom ? "\(s.width)×\(s.height)" : s.resolution.rawValue
-        return "\(instance.android ?? L("Android")) · \(res) \(s.landscape ? L("Landscape") : L("Portrait"))"
+        var line = "\(instance.android ?? L("Android")) · \(res) \(s.landscape ? L("Landscape") : L("Portrait"))"
             + " · \(s.cores) \(L("cores")) · \(s.ramMB / 1024) GB"
+        if let rs = instance.rootStatus {
+            line += " · " + (rs == "active" || rs == "ready" ? L("Rooted") : L("Not rooted"))
+        }
+        return line
     }
 
     @ViewBuilder private func actions(compact: Bool) -> some View {

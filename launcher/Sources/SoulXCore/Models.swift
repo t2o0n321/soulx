@@ -21,6 +21,8 @@ public struct Instance: Decodable, Identifiable, Equatable, Sendable {
     public let lean: Bool
     public let fps: Int
     public let audio: Bool
+    public let rooted: Bool
+    public let rootStatus: String?        // "active", "inactive", "ready", "missing", or nil
     public let serial: String?
     public let pid: Int?
     public let headless: Bool?
@@ -33,7 +35,8 @@ public struct Instance: Decodable, Identifiable, Equatable, Sendable {
 
     enum CodingKeys: String, CodingKey {
         case number = "id", name, state, image, android, cores, ramMB = "ram_mb", dataGB = "data_gb", width, height,
-             dpi, landscape, gpu, dns, stayAwake = "stay_awake", lean, fps, audio, serial, pid, headless,
+             dpi, landscape, gpu, dns, stayAwake = "stay_awake", lean, fps, audio, rooted,
+             rootStatus = "root_status", serial, pid, headless,
              windowPid = "window_pid", runningScript = "running_script", networkCapturePath = "network_capture_path",
              filesDir = "files_dir"
     }
@@ -56,9 +59,11 @@ public struct Instance: Decodable, Identifiable, Equatable, Sendable {
         dns = try c.decodeIfPresent(String.self, forKey: .dns) ?? ""
         stayAwake = try c.decode(Bool.self, forKey: .stayAwake)
         lean = try c.decode(Bool.self, forKey: .lean)
-        // older CLIs did not report these two: their defaults
+        // older CLIs did not report these: their defaults
         fps = try c.decodeIfPresent(Int.self, forKey: .fps) ?? 60
         audio = try c.decodeIfPresent(Bool.self, forKey: .audio) ?? true
+        rooted = try c.decodeIfPresent(Bool.self, forKey: .rooted) ?? false
+        rootStatus = try c.decodeIfPresent(String.self, forKey: .rootStatus)
         serial = try c.decodeIfPresent(String.self, forKey: .serial)
         pid = try c.decodeIfPresent(Int.self, forKey: .pid)
         headless = try c.decodeIfPresent(Bool.self, forKey: .headless)
@@ -74,7 +79,7 @@ public struct Instance: Decodable, Identifiable, Equatable, Sendable {
                          resolution: Resolution.matching(width: width, height: height, dpi: dpi),
                          width: width, height: height,
                          dpi: dpi, landscape: landscape, gpu: GPUMode(rawValue: gpu) ?? .host, dns: dns,
-                         stayAwake: stayAwake, lean: lean, fps: fps, audio: audio)
+                         stayAwake: stayAwake, lean: lean, fps: fps, audio: audio, rooted: rooted)
     }
 }
 

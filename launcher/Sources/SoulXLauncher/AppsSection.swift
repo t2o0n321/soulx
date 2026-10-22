@@ -165,6 +165,7 @@ struct AppsSection: View {
                 Button { if instance.running { Task { await model.appAction(instance.name, "launch", app.package) } } } label: {
                     HStack(spacing: 10) {
                         LetterAvatar(title: app.title, seed: app.package, size: 24)
+                            .activeDot(instance.running && app.running, help: L("In front"))
                         VStack(alignment: .leading, spacing: 2) {
                             Text(app.title).font(.system(size: Metrics.listTitle, weight: .semibold)).lineLimit(1)
                             Text(app.package).font(.system(size: Metrics.listDetail, design: .monospaced)).foregroundStyle(.secondary)
@@ -235,11 +236,9 @@ private struct AppListRow: View {
         HStack(spacing: 12) {
             LetterAvatar(title: app.title, seed: app.package, size: 24)
                 .opacity(live ? 1 : 0.55)
+                .activeDot(live && app.running, help: L("In front"))
             VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 8) {
-                    Text(app.title).font(.system(size: Metrics.listTitle, weight: .semibold)).lineLimit(1)
-                    if live && app.running { StatusPill(text: L("In front"), color: .green) }
-                }
+                Text(app.title).font(.system(size: Metrics.listTitle, weight: .semibold)).lineLimit(1)
                 if app.title != app.package {
                     Text(app.package).font(.system(size: Metrics.listDetail, design: .monospaced)).foregroundStyle(.secondary)
                         .lineLimit(1).truncationMode(.middle)
@@ -247,7 +246,6 @@ private struct AppListRow: View {
             }
             Spacer(minLength: 12)
             if live {
-                if hovering { Button(L("Open"), action: open).buttonStyle(.pill) }
                 Menu {
                     Button(L("Open"), action: open)
                     Button(L("Force stop"), action: stop)

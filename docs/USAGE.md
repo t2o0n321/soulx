@@ -61,6 +61,7 @@ soulx screenshot                    # PNG of the screen
 soulx screenrecord gameplay.webm    # record a video; Ctrl+C stops (the engine caps it at 3 min)
 soulx status                        # details: serial, pid, memory use, log file
 soulx config --cores 6 --ram 6144      # change the settings of an instance (applies at its next start)
+soulx root                              # patch the default instance with Magisk v31.0 (one-time)
 soulx stats --watch                     # CPU and memory use of the running instances
 soulx volume 30                         # sound volume, right away (mute / unmute)
 ```
@@ -109,8 +110,8 @@ Android Studio is never needed or used.
 | `--keep-downloads` | keep the downloaded zip files in `$SOULX_HOME/downloads` |
 | `--force` | reinstall packages that are already installed |
 
-**`soulx doctor`** checks this Mac (Apple Silicon, Hypervisor, memory, free disk), SoulX's runtime, the adb server and
-your instances. It exits with 1 when something keeps SoulX from running.
+**`soulx doctor`** checks this Mac (Apple Silicon, Hypervisor, memory, free disk), SoulX's runtime, Magisk tools (if
+installed), the adb server and your instances. It exits with 1 when something keeps SoulX from running.
 
 **`soulx runtime [--json]`** shows which runtime packages are installed, their versions and disk usage. `--json` also
 says whether the default runtime is ready to run (for launchers).
@@ -144,6 +145,7 @@ or `default`.
 | `--no-lean` | keep every preinstalled Google app running (see [Lean Android](#lean-android)) |
 | `--fps N` | frame rate cap, 20–60 (default 60; see [Frame rate cap](#frame-rate-cap)) |
 | `--no-audio` | no sound device (saves a little CPU; for instances that run in the background) |
+| `--root` | enable Magisk root (requires `soulx root` to set up first; see [Root](#root-magisk)) |
 
 Example: `soulx create racing --profile performance --landscape`
 
@@ -165,6 +167,7 @@ the next start).
 | `--lean`, `--no-lean` | [Lean Android](#lean-android) on or off |
 | `--fps N` | frame rate cap, 20–60 (60 = no cap) |
 | `--audio`, `--no-audio` | sound device on or off |
+| `--root`, `--no-root` | Magisk root on or off (see [Root](#root-magisk)) |
 | `--json` | print the settings (after any change) as JSON, the same fields as `soulx list --json` |
 
 Examples: `soulx config`, `soulx config racing --cores 6 --ram 6144 --landscape`, `soulx config --gpu host-novulkan`.
@@ -380,6 +383,7 @@ changes take effect at the next start.
 | `lean` | `0` or `1` | [Lean Android](#lean-android) (default `1`; a file without the key counts as `1`) |
 | `fps` | 20–60 | [frame rate cap](#frame-rate-cap) (default `60`) |
 | `audio` | `0` or `1` | sound device (default `1`) |
+| `rooted` | `0` or `1` | [Magisk root](#root-magisk) (default `0`) |
 | `created` | timestamp | set by SoulX |
 | `last_port` | number | the console port of the last start, set by SoulX |
 
@@ -459,6 +463,44 @@ To undo it:
 - Enable a single app again in Android's Settings ▸ Apps. SoulX leaves it enabled.
 - Run `soulx config --no-lean` to bring them all back at the next start.
 - Use `soulx create --no-lean` to create an instance without lean mode.
+
+### Root (Magisk)
+
+`soulx root [name]` patches the instance with Magisk v31.0 so `adb shell` can run `su`. This is a one-time
+operation; afterwards start the instance normally and root is available:
+
+```
+soulx root                     # patch the default instance (must be stopped)
+soulx start                    # root is active from the first boot
+adb shell /debug_ramdisk/magisk su -c id   # uid=0(root)
+```
+
+Turn root on and off with `soulx config`:
+
+```
+soulx config --root            # enable (after 'soulx root' has patched)
+soulx config --no-root         # disable (boots with the stock ramdisk; data is not erased)
+```
+
+To verify root is actually working on a running instance:
+
+```
+soulx root --verify            # checks Magisk daemon + su on the running default instance
+soulx root game --verify       # verify on a named instance
+```
+
+To remove root entirely (delete the patched ramdisk):
+
+```
+soulx root game --unroot       # removes the ramdisk and disables root; data is untouched
+```
+
+Root does not affect the system image; each instance has its own patched ramdisk
+(`magisk-ramdisk.img` in the instance's data folder). `--no-root` simply skips that ramdisk at boot; the
+Magisk files stay on the data partition but are harmless. Deleting the instance removes everything.
+
+Magisk v31.0 tools are downloaded once and cached under `$SOULX_HOME/sdk/magisk/`. `soulx doctor`
+checks their integrity; `soulx root` re-downloads any that are missing or broken.
 
 ## The SoulX window
 

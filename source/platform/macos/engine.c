@@ -1261,6 +1261,16 @@ int soulx_mac_start(const char* name, const SoulXStartOpts* opts, SoulXRunState*
     argv[n++] = adb;
     argv[n++] = "-no-window";
     argv[n++] = "-share-vid";
+    char ramdisk_path[PATH_MAX];
+    if (c.rooted &&
+        soulx_path(ramdisk_path, sizeof(ramdisk_path), "avd/%s.avd/magisk-ramdisk.img", avd) == 0 &&
+        access(ramdisk_path, R_OK) == 0) {
+        argv[n++] = "-ramdisk";
+        argv[n++] = ramdisk_path;
+        argv[n++] = "-selinux";
+        argv[n++] = "permissive";
+        soulx_log(SOULX_LOG_INFO, "'%s' using Magisk ramdisk: %s", c.name, ramdisk_path);
+    }
     if (c.dns[0] && dns_valid(c.dns)) {
         argv[n++] = "-dns-server";
         argv[n++] = c.dns;
@@ -1576,6 +1586,27 @@ int soulx_mac_post_boot(const char* name, const SoulXRunState* st) {
         soulx_log(SOULX_LOG_WARN, "post-boot setup of '%s' failed (adb status %d)", c.name, rc);
         return -1;
     }
+
+    // Rooted instances: ensure /data/adb/magisk/ has the tools and the db has a
+    // shell root policy.  post_fs_data never fires on GKI 2SI so setup_magisk_env
+    // never runs; we do it here on every boot via su (idempotent, ~50 ms).
+    if (c.rooted) {
+        out = NULL;
+        rc = soulx_adb_shell(serial,
+            "/debug_ramdisk/magisk su -c '"
+            "mkdir -p /data/adb/magisk && "
+            "cp /debug_ramdisk/busybox /data/adb/magisk/busybox && "
+            "cp /debug_ramdisk/magiskpolicy /data/adb/magisk/magiskpolicy && "
+            "cp /debug_ramdisk/magisk /data/adb/magisk/magisk && "
+            "chmod 755 /data/adb/magisk/busybox /data/adb/magisk/magiskpolicy /data/adb/magisk/magisk && "
+            "/debug_ramdisk/magisk --sqlite "
+            "\"INSERT OR REPLACE INTO policies VALUES(2000,2,0,1,1);\"'",
+            &out, POST_BOOT_TIMEOUT_MS);
+        free(out);
+        if (rc != 0)
+            soulx_log(SOULX_LOG_WARN, "Magisk environment setup failed for '%s' (su works but some features may not)", c.name);
+    }
+
     return 0;
 }
 

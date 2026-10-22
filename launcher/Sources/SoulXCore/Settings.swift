@@ -61,13 +61,15 @@ public struct InstanceSettings: Equatable, Sendable {
     public var lean: Bool
     public var fps: Int
     public var audio: Bool
+    public var rooted: Bool
 
     public init(cores: Int, ramMB: Int, dataGB: Int, resolution: Resolution, width: Int, height: Int, dpi: Int,
-                landscape: Bool, gpu: GPUMode, dns: String, stayAwake: Bool, lean: Bool, fps: Int, audio: Bool) {
+                landscape: Bool, gpu: GPUMode, dns: String, stayAwake: Bool, lean: Bool, fps: Int, audio: Bool,
+                rooted: Bool = false) {
         self.cores = cores; self.ramMB = ramMB; self.dataGB = dataGB; self.resolution = resolution
         self.width = min(width, height); self.height = max(width, height); self.dpi = dpi
         self.landscape = landscape; self.gpu = gpu; self.dns = dns; self.stayAwake = stayAwake; self.lean = lean
-        self.fps = fps; self.audio = audio
+        self.fps = fps; self.audio = audio; self.rooted = rooted
     }
 
     public static func defaults(profile: Profile) -> InstanceSettings {
@@ -75,7 +77,7 @@ public struct InstanceSettings: Equatable, Sendable {
         return InstanceSettings(cores: profile.cores, ramMB: profile.ramMB, dataGB: profile == .performance ? 16 : 8,
                                 resolution: profile.resolution, width: s.width, height: s.height, dpi: s.dpi,
                                 landscape: false, gpu: .host, dns: "", stayAwake: true, lean: true, fps: 60,
-                                audio: true)
+                                audio: true, rooted: false)
     }
 
     /// The profile these settings match (CPUs, RAM, screen), or nil for custom ones.
@@ -105,6 +107,7 @@ public struct InstanceSettings: Equatable, Sendable {
         if !stayAwake { a.append("--no-stay-awake") }
         if !lean { a.append("--no-lean") }
         if !audio { a.append("--no-audio") }
+        if rooted { a.append("--root") }
         return a
     }
 
@@ -123,6 +126,7 @@ public struct InstanceSettings: Equatable, Sendable {
         if lean != old.lean { a.append(lean ? "--lean" : "--no-lean") }
         if fps != old.fps { a += ["--fps", "\(fps)"] }
         if audio != old.audio { a.append(audio ? "--audio" : "--no-audio") }
+        // rooted is handled separately by AppModel.applyRoot() — it runs 'soulx root' / 'soulx root --unroot'
         return a.isEmpty ? [] : ["config", name] + a + ["--json"]
     }
 }

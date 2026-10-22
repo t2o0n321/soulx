@@ -15,6 +15,7 @@ struct ScriptsSection: View {
     @State private var newName = ""
     @State private var removing: ScriptList.Script?
     @State private var runningOnly = false
+    @State private var hovered: String?               // the row under the pointer (highlighted, like the apps list)
 
     private var scripts: [ScriptList.Script] { list?.scripts ?? [] }
     private var runningPath: String? { instance.running ? instance.runningScript : nil }
@@ -99,6 +100,7 @@ struct ScriptsSection: View {
         let isRunning = s.path == runningPath
         return HStack(spacing: 12) {
             TagAvatar(text: "LUA", size: 24)
+                .activeDot(isRunning, help: L("Running"))
             VStack(alignment: .leading, spacing: 2) {
                 Text(s.title).font(.system(size: Metrics.listTitle, weight: .semibold)).lineLimit(1)
                 Text(s.name == nil ? L("no name: the window will not list it") : s.file)
@@ -107,19 +109,8 @@ struct ScriptsSection: View {
                     .lineLimit(1).truncationMode(.middle)
             }
             Spacer(minLength: 12)
-            if isRunning {
-                StatusPill(text: L("Running"), color: .green)
-                Button { model.stopScript(instance.name) } label: { Label(L("Stop"), systemImage: "stop.fill") }
-                    .buttonStyle(.pill)
-            } else if instance.running {
-                Button { Task { await model.runScript(instance.name, path: s.path) } } label: {
-                    Label(L("Run"), systemImage: "play.fill")
-                }
-                .buttonStyle(.pillTinted)
-                .disabled(runningPath != nil)
-                .help(runningPath != nil ? L("Another script is running.") : L("Run"))
-            } else {
-                Text(L("Runs once started")).font(.system(size: 11)).foregroundStyle(.secondary)
+            if !instance.running {
+                Text(L("Runs once started")).font(.system(size: Metrics.caption)).foregroundStyle(.secondary)
             }
             Menu { scriptMenu(s) } label: {
                 Image(systemName: "ellipsis").frame(width: 22, height: 22).contentShape(Circle())
@@ -132,16 +123,33 @@ struct ScriptsSection: View {
         }
         .padding(.leading, 16).padding(.trailing, 8)
         .frame(height: AppsSection.rowHeight)
-        .background(isRunning ? Color.green.opacity(0.06) : Color.clear)
+        .background(hovered == s.path ? Color.primary.opacity(0.06) : Color.clear)
         .overlay(alignment: .bottom) { Rectangle().fill(Color.primary.opacity(0.05)).frame(height: 1) }
+        .contentShape(Rectangle())
+        .onHover { hovered = $0 ? s.path : (hovered == s.path ? nil : hovered) }
+        .onTapGesture(count: 2) { run(s) }                // like double-clicking an app opens it
         .contextMenu { scriptMenu(s) }
+        .help(instance.running ? (runningPath == nil ? L("Double-click to run") : "") : L("Runs once started"))
     }
 
     @ViewBuilder private func scriptMenu(_ s: ScriptList.Script) -> some View {
+        if s.path == runningPath {
+            Button(L("Stop")) { model.stopScript(instance.name) }
+        } else {
+            Button(L("Run")) { run(s) }
+                .disabled(!instance.running || runningPath != nil)
+        }
+        Divider()
         Button(L("Rename…")) { newName = s.name ?? ""; renaming = s }
         Button(L("Show in Finder")) { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: s.path)]) }
         Divider()
         Button(L("Move to Trash…"), role: .destructive) { removing = s }
+    }
+
+    /// Runs a script, when the instance runs and no other script does.
+    private func run(_ s: ScriptList.Script) {
+        guard instance.running, runningPath == nil else { return }
+        Task { await model.runScript(instance.name, path: s.path) }
     }
 
     private func reload() async {

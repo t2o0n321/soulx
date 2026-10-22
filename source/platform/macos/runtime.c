@@ -1865,6 +1865,15 @@ int soulx_doctor(void) {
 
     check_adb_server(&t);
 
+    // Magisk root tools
+    if (soulx_magisk_tools_ok()) check_line(&t, 'o', "Magisk v%s tools installed", SOULX_MAGISK_VERSION);
+    // only report when tools were installed at some point (the directory exists) but are now broken
+    else {
+        char mdir[PATH_MAX];
+        if (soulx_path(mdir, sizeof(mdir), "%s", SOULX_MAGISK_DIR) == 0 && soulx_is_dir(mdir))
+            check_line(&t, '!', "Magisk tools incomplete — run: soulx root <name>");
+    }
+
     // Instances
     SoulXInstanceConf* list = calloc(MAX_REG_LIST, sizeof(*list));
     if (list) {
@@ -1883,6 +1892,14 @@ int soulx_doctor(void) {
                            list[i].id, list[i].name, img->key);
             } else {
                 check_line(&t, 'o', "Instance #%d %s: stopped", list[i].id, list[i].name);
+            }
+            if (list[i].rooted) {
+                char rd[PATH_MAX];
+                if (soulx_path(rd, sizeof(rd), "avd/soulx_%s.avd/%s", list[i].name, SOULX_MAGISK_RAMDISK) == 0 &&
+                    soulx_path_exists(rd))
+                    check_line(&t, 'o', "  root: Magisk ramdisk present");
+                else
+                    check_line(&t, '!', "  root: rooted=1 but magisk-ramdisk.img missing — run: soulx root %s", list[i].name);
             }
         }
         free(list);

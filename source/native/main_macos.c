@@ -71,7 +71,7 @@ int soulx_image_save_png(const char* path, const SoulXImage* img);
 #define CLI_CONSOLE_MAX         1024
 #define CLI_CONSOLE_REPLY       (64 * 1024)
 #define CLI_LIST_MAX            512
-#define CLI_MAX_OPTS            20
+#define CLI_MAX_OPTS            24
 #define CLI_SHELL_TIMEOUT_MS    30000
 #define CLI_CELL                64
 
@@ -1511,7 +1511,8 @@ static int cmd_play(const CliCommand* self, const CliArgs* a, const CliGlobal* g
 
 enum {
     CREATE_PROFILE, CREATE_LANDSCAPE, CREATE_CORES, CREATE_RAM, CREATE_RES, CREATE_DPI, CREATE_DATA,
-    CREATE_IMAGE, CREATE_GPU, CREATE_DNS, CREATE_NO_STAY_AWAKE, CREATE_NO_LEAN, CREATE_FPS, CREATE_NO_AUDIO
+    CREATE_IMAGE, CREATE_GPU, CREATE_DNS, CREATE_NO_STAY_AWAKE, CREATE_NO_LEAN, CREATE_FPS, CREATE_NO_AUDIO,
+    CREATE_ROOT
 };
 static const CliOpt k_create_opts[] = {
     [CREATE_PROFILE]       = { "profile",       0, true  },
@@ -1528,6 +1529,7 @@ static const CliOpt k_create_opts[] = {
     [CREATE_NO_LEAN]       = { "no-lean",       0, false },
     [CREATE_FPS]           = { "fps",           0, true  },
     [CREATE_NO_AUDIO]      = { "no-audio",      0, false },
+    [CREATE_ROOT]          = { "root",          0, false },
 };
 _Static_assert(NOPTS(k_create_opts) <= CLI_MAX_OPTS, "too many create options");
 
@@ -1613,6 +1615,9 @@ static int cmd_create(const CliCommand* self, const CliArgs* a, const CliGlobal*
     if (a->val[CREATE_NO_AUDIO]) {
         c.audio = false;
     }
+    if (a->val[CREATE_ROOT]) {
+        c.rooted = true;
+    }
     if (a->val[CREATE_LANDSCAPE]) {
         make_landscape(&c);
     } else {
@@ -1695,6 +1700,7 @@ typedef struct {
 static void json_instance(FILE* f, const SoulXInstanceConf* c, bool running, const SoulXRunState* st,
                           const StatusExtra* x) {
     const SoulXPackage* img = find_image(c->image);
+    char serial[64] = "";
     fprintf(f, "{\"id\": %d, \"name\": ", c->id);
     json_str(f, c->name);
     fputs(", \"state\": ", f);
@@ -1712,11 +1718,11 @@ static void json_instance(FILE* f, const SoulXInstanceConf* c, bool running, con
     json_str(f, c->gpu);
     fputs(", \"dns\": ", f);
     json_str(f, c->dns);
-    fprintf(f, ", \"stay_awake\": %s, \"lean\": %s, \"fps\": %d, \"audio\": %s, \"created\": ",
-            c->stay_awake ? "true" : "false", c->lean ? "true" : "false", c->fps, c->audio ? "true" : "false");
+    fprintf(f, ", \"stay_awake\": %s, \"lean\": %s, \"fps\": %d, \"audio\": %s, \"rooted\": %s, \"created\": ",
+            c->stay_awake ? "true" : "false", c->lean ? "true" : "false", c->fps, c->audio ? "true" : "false",
+            c->rooted ? "true" : "false");
     json_str(f, c->created);
     if (running) {
-        char serial[64];
         soulx_serial(st->port, serial, sizeof serial);
         fputs(", \"serial\": ", f);
         json_str(f, serial);
@@ -1756,6 +1762,24 @@ static void json_instance(FILE* f, const SoulXInstanceConf* c, bool running, con
     } else {
         fputs("null", f);
     }
+    // root_status: "active" (running + magisk verified), "ready" (stopped + ramdisk valid),
+    //              "missing" (rooted=1 but no ramdisk), null (not rooted)
+    fputs(", \"root_status\": ", f);
+    if (!c->rooted) {
+        fputs("null", f);
+    } else if (running) {
+        char* out = NULL;
+        bool active = soulx_adb_shell(serial, "test -f /debug_ramdisk/magisk && echo 1", &out, 5000) == 0
+                      && out && out[0] == '1';
+        free(out);
+        json_str(f, active ? "active" : "inactive");
+    } else {
+        char rd[PATH_MAX];
+        struct stat rdst;
+        bool ready = soulx_path(rd, sizeof rd, "avd/soulx_%s.avd/%s", c->name, SOULX_MAGISK_RAMDISK) == 0
+                     && stat(rd, &rdst) == 0 && rdst.st_size > (1024 * 1024);
+        json_str(f, ready ? "ready" : "missing");
+    }
     if (x) {
         fputs(", \"booted\": ", f);
         fputs(!running ? "false" : !x->boot_known ? "null" : x->booted ? "true" : "false", f);
@@ -1778,7 +1802,7 @@ static void json_instance(FILE* f, const SoulXInstanceConf* c, bool running, con
 enum {
     CONFIG_PROFILE, CONFIG_LANDSCAPE, CONFIG_PORTRAIT, CONFIG_CORES, CONFIG_RAM, CONFIG_RES, CONFIG_DPI,
     CONFIG_DATA, CONFIG_GPU, CONFIG_DNS, CONFIG_NO_DNS, CONFIG_STAY_AWAKE, CONFIG_NO_STAY_AWAKE, CONFIG_LEAN,
-    CONFIG_NO_LEAN, CONFIG_FPS, CONFIG_AUDIO, CONFIG_NO_AUDIO, CONFIG_JSON
+    CONFIG_NO_LEAN, CONFIG_FPS, CONFIG_AUDIO, CONFIG_NO_AUDIO, CONFIG_ROOT, CONFIG_NO_ROOT, CONFIG_JSON
 };
 static const CliOpt k_config_opts[] = {
     [CONFIG_PROFILE]       = { "profile",       0, true  },
@@ -1799,6 +1823,8 @@ static const CliOpt k_config_opts[] = {
     [CONFIG_FPS]           = { "fps",           0, true  },
     [CONFIG_AUDIO]         = { "audio",         0, false },
     [CONFIG_NO_AUDIO]      = { "no-audio",      0, false },
+    [CONFIG_ROOT]          = { "root",          0, false },
+    [CONFIG_NO_ROOT]       = { "no-root",       0, false },
     [CONFIG_JSON]          = { "json",          0, false },
 };
 _Static_assert(NOPTS(k_config_opts) <= CLI_MAX_OPTS, "too many config options");
@@ -1819,6 +1845,7 @@ static void print_conf_text(const SoulXInstanceConf* c, bool running) {
     printf("  lean        %s\n", c->lean ? "on" : "off");
     printf("  fps         %d\n", c->fps);
     printf("  audio       %s\n", c->audio ? "on" : "off");
+    printf("  rooted      %s\n", c->rooted ? "on" : "off");
 }
 
 // Prints one "name: old -> new" line per changed setting; returns how many changed.
@@ -1846,6 +1873,7 @@ static int print_conf_changes(const SoulXInstanceConf* o, const SoulXInstanceCon
     CHANGED_BOOL("lean", lean)
     CHANGED_INT("fps", fps, "")
     CHANGED_BOOL("audio", audio)
+    CHANGED_BOOL("rooted", rooted)
 #undef CHANGED_INT
 #undef CHANGED_BOOL
     return count;
@@ -1879,6 +1907,9 @@ static int cmd_config(const CliCommand* self, const CliArgs* a, const CliGlobal*
     }
     if (a->val[CONFIG_AUDIO] && a->val[CONFIG_NO_AUDIO]) {
         return usage_error(self, "--audio and --no-audio cannot be used together");
+    }
+    if (a->val[CONFIG_ROOT] && a->val[CONFIG_NO_ROOT]) {
+        return usage_error(self, "--root and --no-root cannot be used together");
     }
 
     SoulXInstanceConf c = cur;
@@ -1941,6 +1972,8 @@ static int cmd_config(const CliCommand* self, const CliArgs* a, const CliGlobal*
     }
     if (a->val[CONFIG_AUDIO]) c.audio = true;
     if (a->val[CONFIG_NO_AUDIO]) c.audio = false;
+    if (a->val[CONFIG_ROOT]) c.rooted = true;
+    if (a->val[CONFIG_NO_ROOT]) c.rooted = false;
 
     bool needs_restart = false;
     if (changing && soulx_mac_reconfigure(&c, &needs_restart) != 0) {
@@ -3673,6 +3706,26 @@ static int cmd_doctor(const CliCommand* self, const CliArgs* a, const CliGlobal*
     return soulx_doctor() == 0 ? CLI_EXIT_OK : CLI_EXIT_FAIL;
 }
 
+enum { ROOT_UNROOT, ROOT_VERIFY };
+static const CliOpt k_root_opts[] = {
+    [ROOT_UNROOT] = { "unroot", 0, false },
+    [ROOT_VERIFY] = { "verify", 0, false },
+};
+
+static int cmd_root(const CliCommand* self, const CliArgs* a, const CliGlobal* g) {
+    const char* ref = NULL;
+    int rc = instance_from_args(self, a, g, &ref);
+    if (rc != 0) return rc;
+
+    if (a->val[ROOT_VERIFY]) {
+        return soulx_magisk_verify(ref) == 0 ? CLI_EXIT_OK : CLI_EXIT_FAIL;
+    }
+    if (a->val[ROOT_UNROOT]) {
+        return soulx_magisk_unpatch(ref) == 0 ? CLI_EXIT_OK : CLI_EXIT_FAIL;
+    }
+    return soulx_magisk_patch(ref) == 0 ? CLI_EXIT_OK : CLI_EXIT_FAIL;
+}
+
 enum { SCRIPTS_JSON };
 static const CliOpt k_scripts_opts[] = {
     [SCRIPTS_JSON] = { "json", 0, false },
@@ -4224,6 +4277,7 @@ static const CliCommand k_commands[] = {
       "  --fps N           frame rate cap, 20-60 (default 60): the Android screen refreshes N times a\n"
       "                    second, so games render at most that often (30 saves CPU and GPU for idle farming)\n"
       "  --no-audio        no sound (saves a little CPU; useful for instances that run in the background)\n"
+      "  --root            enable Magisk root (requires 'soulx root' to set up first)\n"
       "\n"
       "Example: soulx create racing --profile performance --landscape\n",
       k_create_opts, NOPTS(k_create_opts), CLI_INTERLEAVED, true },
@@ -4255,6 +4309,8 @@ static const CliCommand k_commands[] = {
       "  --fps N           frame rate cap, 20-60 (60 = no cap)\n"
       "  --audio           sound on\n"
       "  --no-audio        sound off (no audio device)\n"
+      "  --root            enable Magisk root\n"
+      "  --no-root         disable Magisk root (boot with the stock ramdisk)\n"
       "  --json            print the settings (after any change) as JSON\n"
       "\n"
       "Examples:\n"
@@ -4544,6 +4600,26 @@ static const CliCommand k_commands[] = {
       "\n"
       "  --json   print {\"path\": ...} instead\n",
       k_network_capture_opts, NOPTS(k_network_capture_opts), CLI_INTERLEAVED, true },
+
+    { "root", cmd_root, GROUP_TOOLS, "root [name]", "set up Magisk root on an instance",
+      "soulx root [name] [--unroot] [--verify]\n"
+      "\n"
+      "Downloads Magisk v" SOULX_MAGISK_VERSION ", patches the instance's ramdisk and enables root. The instance must be\n"
+      "stopped. SoulX starts it headless during patching and stops it when done; the next 'soulx start'\n"
+      "boots with Magisk root active.\n"
+      "\n"
+      "  --unroot    remove the patched ramdisk and disable root (the data partition is untouched)\n"
+      "  --verify    check whether root is actually working on a running instance (adb su test)\n"
+      "\n"
+      "Magisk tools are downloaded once and cached under $SOULX_HOME/" SOULX_MAGISK_DIR "/.\n"
+      "'soulx doctor' checks them; 'soulx root' re-downloads any that are missing or broken.\n"
+      "\n"
+      "Examples:\n"
+      "  soulx root              # root the default instance\n"
+      "  soulx root game         # root a named instance\n"
+      "  soulx root game --unroot  # remove root\n"
+      "  soulx root --verify     # verify root on the running default instance\n",
+      k_root_opts, NOPTS(k_root_opts), CLI_INTERLEAVED, true },
 
     { "doctor", cmd_doctor, GROUP_TOOLS, "doctor", "check this Mac, the runtime and your instances",
       "soulx doctor\n"

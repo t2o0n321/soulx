@@ -192,6 +192,63 @@ final class AppModel: ObservableObject {
         return running ? L("Saved. The running instance gets the new settings when it restarts.") : L("Saved.")
     }
 
+    private static let rootStepLabels: [Int: String] = [
+        1: L("Downloading Magisk tools"),
+        2: L("Starting instance"),
+        3: L("Waiting for boot"),
+        4: L("Pushing tools to device"),
+        5: L("Patching ramdisk"),
+        6: L("Pulling patched ramdisk"),
+        7: L("Stopping instance"),
+    ]
+
+    /// Patches or unpatches the instance's ramdisk with Magisk. Called directly from the Root toggle.
+    @discardableResult
+    func applyRoot(_ name: String, enable: Bool) async -> String? {
+        guard let cli else { return nil }
+        if enable {
+            let running = instance(name)?.running ?? false
+            if running {
+                await perform(name, L("Stopping…"), ["stop", name])
+            }
+            busy[name] = L("Setting up root…")
+            let result: String? = await withCheckedContinuation { cont in
+                var errors: [String] = []
+                cli.stream(["root", name], onLine: { [weak self] line in
+                    Task { @MainActor [weak self] in
+                        guard let self else { return }
+                        if line.hasPrefix("[root] ") {
+                            let parts = line.dropFirst(7).split(separator: " ", maxSplits: 1)
+                            if let frac = parts.first, let slash = frac.firstIndex(of: "/"),
+                               let step = Int(frac[..<slash]), let total = Int(frac[frac.index(after: slash)...]) {
+                                let label = Self.rootStepLabels[step] ?? String(parts.last ?? "")
+                                self.busy[name] = "Root (\(step)/\(total)) \(label)…"
+                            }
+                        } else if line.hasPrefix("soulx: error: ") {
+                            errors.append(String(line.dropFirst(14)))
+                        }
+                    }
+                }, onExit: { [weak self] status in
+                    Task { @MainActor [weak self] in
+                        guard let self else { return }
+                        self.busy[name] = nil
+                        await self.refresh()
+                        if status != 0 {
+                            self.alert = errors.last ?? L("Error")
+                            cont.resume(returning: nil)
+                        } else {
+                            cont.resume(returning: L("Root is ready. Start the instance to use it."))
+                        }
+                    }
+                })
+            }
+            return result
+        } else {
+            guard let r = await perform(name, L("Removing root…"), ["root", name, "--unroot"]), r.ok else { return nil }
+            return L("Root removed.")
+        }
+    }
+
     // --- apps (listing, installing and acting on them needs the instance running; the list is
     // also cached so a stopped instance can still show what was installed last time it ran) ---
 
@@ -277,10 +334,14 @@ final class AppModel: ObservableObject {
     /// up (same as openWindow's own best-effort retry).
     func runScript(_ name: String, path: String) async {
         if instance(name)?.windowPid == nil {
-            await perform(name, "", ["window", name])
+            // `soulx window` opens one, or fronts a window that is already open. That window may not be reported
+            // as this CLI's (a window started by another copy of SoulX), so the request is sent either way: the
+            // window listens by instance name. A window that has just started gets a moment to listen.
+            let r = await perform(name, "", ["window", name])
+            guard r?.ok == true else { return }
             await activateWindowSoon(name)
+            if instance(name)?.windowPid == nil { try? await Task.sleep(nanoseconds: 1_500_000_000) }
         }
-        guard instance(name)?.windowPid != nil else { return }
         DistributedNotificationCenter.default().postNotificationName(Self.runNotification, object: name,
                                                                       userInfo: ["path": path], deliverImmediately: true)
     }
