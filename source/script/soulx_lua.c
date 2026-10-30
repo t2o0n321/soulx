@@ -697,6 +697,11 @@ static void point_args(lua_State* L, ScriptCtx* ctx, int idx, const char* what, 
 // Screen cache
 // ---------------------------------------------------------------------------
 
+// Tests pin the cache window (soulx_lua_set_cache_max_age_ms) so the "reuse within the window" cases stay
+// deterministic no matter how long an operation takes on a slow CI runner (0 = use the caller's own value).
+static double g_cache_max_age_override = 0.0;
+int soulx_lua_set_cache_max_age_ms(double ms) { g_cache_max_age_override = ms; return 0; }
+
 static void screen_drop(ScriptCtx* ctx) {
     free(ctx->screen.rgba);
     memset(&ctx->screen, 0, sizeof(ctx->screen));
@@ -706,6 +711,7 @@ static void screen_drop(ScriptCtx* ctx) {
 // The current screen: the cached capture while younger than max_age_ms, else a new capture.
 // The result stays valid until the next screen_get/screen_drop (see the rule in the header).
 static const SoulXImage* screen_get(lua_State* L, ScriptCtx* ctx, double max_age_ms, const char* what) {
+    if (max_age_ms > 0.0 && g_cache_max_age_override > 0.0) max_age_ms = g_cache_max_age_override;  // test seam
     if (ctx->screen.rgba && max_age_ms > 0.0 && soulx_now_ms() - ctx->screen_ms < max_age_ms) {
         return &ctx->screen;
     }

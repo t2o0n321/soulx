@@ -63,6 +63,7 @@ typedef struct {
 } SoulXLuaDeviceOps;
 
 extern int soulx_lua_set_device_ops(const SoulXLuaDeviceOps* ops, size_t ops_size);
+extern int soulx_lua_set_cache_max_age_ms(double ms);     // tests pin the cache window; 0 = default (100 ms)
 
 // ---------------------------------------------------------------------------
 // Checks
@@ -898,13 +899,16 @@ static void test_screen_cache(void) {
     expect_ok(&g_run, "cache4");
     CHECK(g_fake.captures == 2, "capture() always captures, color reuses it: %d captures", g_fake.captures);
 
-    // (a small region keeps each search far below 100 ms, also in unoptimised builds)
+    // find/exists/tap do template matching; three of them can exceed the 100 ms window on a slow CI runner
+    // and re-capture. Pin the window so the reuse is deterministic — cache2 above already covers the expiry.
     fake_reset();
+    soulx_lua_set_cache_max_age_ms(1e9);
     run(&g_run, "cache5.lua",
         "local near = {region = {420, 1590, 240, 120}}\n"
         "assert(find('img/button.png', near))\n"
         "assert(exists('img/button.png', near))\n"
         "assert(tap('img/button.png', near))\n");
+    soulx_lua_set_cache_max_age_ms(0.0);
     expect_ok(&g_run, "cache5");
     CHECK(g_fake.captures == 1 && log_has("default: tap 540 1650"), "find+exists+tap: %d captures",
           g_fake.captures);
