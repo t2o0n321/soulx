@@ -175,8 +175,8 @@ static const SoulXPackage k_angle_package = {
     .version = "37.3.6-soulx1",
     .url = "https://github.com/t2o0n321/soulx/releases/download/engine-angle-37.3.6-soulx1/"
            "emulator-angle-37.3.6-soulx1-darwin_aarch64.zip",
-    .size = 417385616ULL,
-    .sha1 = "f9a3fe1ca845231d6f13316e42684e5d7c42db04",
+    .size = 417256489ULL,
+    .sha1 = "a571c04f6f4b30430dbd7001fb8c6100a92e4b24",
     .license_id = NULL,
     .zip_root = "emulator",
     .install_rel = "emulator-angle",
