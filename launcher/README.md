@@ -1,14 +1,18 @@
 # SoulX launcher
 
 A small SwiftUI app for managing SoulX instances without the terminal: create, configure, start (with or without a
-window), stop and delete instances, see their CPU and memory use live, set the volume, install, open and uninstall apps
-(shown by name; APKs can be dropped on the page), manage each instance's
-scripts (import, rename, show in Finder, move to the Trash; running them stays in SoulX's window), turn AI control
-(MCP) on or off, connect AI apps with one click, set its permissions and see what the AI did, switch the language, install the Android runtime
-on first use, and update itself from GitHub releases.
+window), stop and delete instances, choose each instance's emulator engine (standard, or Angle for Google Play
+sign-in) and networking (NAT, Host-only or Bridged, installing the network helper when one is first needed), see
+their CPU and memory use live, set the volume, install, open and uninstall apps (shown by name; APKs can be dropped
+on the page), manage each instance's scripts (import, rename, show in Finder, move to the Trash; running them stays
+in SoulX's window), root an instance with Magisk and open an Android shell or a root shell, record its WiFi traffic
+to a `.pcap`, export and import instances as `.soulxvm` files, turn AI control (MCP) on or off, connect AI apps with
+one click, set its permissions and see what the AI did, switch the language, install the Android runtime on first
+use, and update itself from GitHub releases.
 
-It talks to SoulX only through the `soulx` CLI's JSON output (`list`, `config`, `stats --watch`, `volume`,
-`runtime`, `scripts`, `language`, all with `--json`), so it never depends on SoulX's file formats.
+It drives SoulX only through the `soulx` CLI — reading its `--json` output (`list`, `config`, `runtime`,
+`stats --watch`, …) and running its commands (create, start/stop, export/import, root, `net`, network capture,
+shell, volume, language, …) — so it never depends on SoulX's file formats.
 
 Its only network access is the update check: `GET https://api.github.com/repos/t2o0n321/soulx/releases/latest`
 when it opens and every 6 hours, and the release's `SoulX-v<version>.zip` and `.sha256` when the user updates. A

@@ -23,6 +23,9 @@ soulx run farm.lua                 # let a Lua script play
   `~/.soulx-android` and checks every download. SoulX does not need or touch Android Studio, its SDK, Java or `~/.android`.
 - **Uses the Mac's GPU.** Games render on Apple's GPU through gfxstream: Vulkan through MoltenVK and OpenGL ES through
   Apple's OpenGL on Metal. SoulX never falls back to software rendering unless you ask for it.
+- **Google Play sign-in.** Each instance picks an emulator engine: the standard one, or **Angle** — a patched engine
+  that gives the guest OpenGL ES 3.1, which the Google Play / Google-account sign-in page needs on macOS (Apple's
+  OpenGL caps at 3.0). Downloaded on demand the first time you use it.
 - **A native window.** The window is AppKit + Metal. It reads every frame straight from the engine's shared memory
   (about 0.1 ms after the engine writes it) and has a toolbar, screenshots, video recording and a coordinate/colour
   inspector.
@@ -34,6 +37,11 @@ soulx run farm.lua                 # let a Lua script play
   into a script.
 - **Multiple instances.** Several independent phones can each have their own apps, screen size, CPU and RAM. Each
   can run with or without a window.
+- **Per-instance networking.** NAT (the default), Host-only or Bridged, through a built-in vmnet bridge helper.
+- **Root, a shell and network capture.** One-click Magisk root (`soulx root`), an Android shell or a root shell from
+  the launcher, and recording an instance's WiFi traffic to a `.pcap` for Wireshark.
+- **Export and import instances.** Save a stopped instance as one `.soulxvm` file and add it again, here or on
+  another Mac.
 - **Built for long sessions.** A frame rate cap (30 fps uses about 30% less engine CPU), per-instance sound
   control, and `soulx stats` for each instance's CPU and memory use.
 - **AI control (MCP), off by default.** Let an AI app (any MCP client) look at the screen and play, with per-instance
@@ -51,7 +59,7 @@ soulx run farm.lua                 # let a Lua script play
 | macOS | 14 or later for SoulX.app; 12 or later for the `soulx` command built from source |
 | Memory | 8 GB minimum, 16 GB recommended (each running instance gives Android 4 GB or more) |
 | Disk | about 5 GB for the runtime, plus about 6 GB per instance |
-| Network | once, for `soulx setup` (about 2.7 GB from dl.google.com); SoulX.app also asks GitHub for the latest release |
+| Network | once, for `soulx setup` (about 2.7 GB from dl.google.com); the Angle engine, if you use it, adds a ~400 MB download from GitHub; SoulX.app also asks GitHub for the latest release |
 
 SoulX is macOS-only. Windows and Linux are not supported.
 
@@ -114,7 +122,7 @@ with `scripts/versioning/bump-version-calendar.sh` (the first release of a month
 | **[docs/SCRIPTING.md](docs/SCRIPTING.md)** | The Lua automation API, with a tutorial |
 | **[examples/scripts/](examples/scripts/)** | Complete example scripts |
 | **[docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)** | For developers: building from source, tests, project layout, architecture and debugging |
-| **[launcher/](launcher/)** | The SwiftUI launcher (in development): manage instances without the terminal |
+| **[launcher/](launcher/)** | The SwiftUI launcher: manage instances without the terminal |
 
 ## Acknowledgements
 

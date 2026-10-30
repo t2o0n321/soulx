@@ -28,7 +28,9 @@ cd soulx
 | `--debug` | Debug build instead of Release |
 | `--clean` | delete `build/macos` before configuring |
 
-The result is a single binary, `build/macos/soulx` (about 600 KB, with Lua built in). To use it from anywhere:
+The build produces two binaries: `build/macos/soulx` (the CLI, about 600 KB, with Lua built in) and
+`build/macos/soulx_netd` (a small privileged vmnet bridge helper for Host-only / Bridged networking; its own CMake
+target, installed to `libexec`). To use the CLI from anywhere:
 
 ```bash
 sudo cmake --install build/macos       # installs /usr/local/bin/soulx
@@ -62,7 +64,8 @@ DEVELOPER_DIR=/Library/Developer/CommandLineTools ./scripts/build_macos.sh --tes
 ```
 
 `SoulX.app` holds the launcher (`Contents/MacOS/SoulX`), the CLI (`Contents/Helpers/soulx`, which also runs SoulX's
-window and the MCP server) and the icon (drawn by `scripts/make_icon.swift`, the same drawing as `SoulXAppIcon()` in
+window and the MCP server), the vmnet bridge helper (`Contents/Helpers/soulx_netd`, for Host-only / Bridged
+networking) and the icon (drawn by `scripts/make_icon.swift`, the same drawing as `SoulXAppIcon()` in
 the window). Its version comes from `VERSION`; the build number is the commit count. The app is signed
 ad hoc only: it is deliberately not signed with a Developer ID nor notarized, so people allow it once in
 System Settings > Privacy & Security.
@@ -79,7 +82,15 @@ Releases are published by `.github/workflows/release.yml`:
    (`scripts/release_notes.sh`).
 
 Running the workflow by hand (Actions > Release > Run workflow) builds the .dmg as an artifact without publishing.
-CI also packages the app on every push, so a broken package shows up before a release.
+`ci.yml` builds and tests on every push and PR — a release/debug matrix for the CLI plus a separate SwiftUI launcher
+job — so a broken build or package shows up before a release.
+
+The **angle engine** is released separately by `.github/workflows/engine-angle.yml`: pushing an
+`engine-angle-<emuver>-soulx<N>` tag builds, signs and publishes the patched emulator with
+`scripts/build_angle_emulator.sh` (AOSP `emu-main-dev`, the pinned + local manifests in `scripts/`, the patches in
+`patches/`, the entitlements in `scripts/emu-entitlements.plist`). A rebuild's ad-hoc signature changes the zip's
+SHA-1, so after it runs, pin the SHA-1 and size it prints into `k_angle_package` in `runtime.c` (bump `SOULX_REV` in
+the build script when the patches change) and cut the matching app release.
 
 ## Tests
 
@@ -106,7 +117,7 @@ Run one test with `ctest -R registry --output-on-failure` in `build/macos`.
 ## Project layout
 
 ```
-CMakeLists.txt              macOS-only build; target `soulx`, test target `soulx_tests`
+CMakeLists.txt              macOS-only build; targets `soulx` and `soulx_netd`, test target `soulx_tests`
 scripts/build_macos.sh      build script
 scripts/package_macos.sh    SoulX.app, .dmg and .zip (make_icon.swift draws the icon, release_notes.sh the release text)
 source/
@@ -118,7 +129,12 @@ source/
     proc.c                  posix_spawn with argument arrays and isolated environments
     runtime.c               `soulx setup`: package downloads, SHA-1 checks, licenses, ANGLE preparation
     avd.c, registry.c       device definitions and instance settings (`instances/<name>.conf`)
-    engine.c                starting/stopping the engine, GPU modes, post-boot commands
+    engine.c                starting/stopping the engine (legacy/angle), GPU modes, post-boot commands
+    magisk.c                one-click Magisk root (`soulx root`): patches an instance's ramdisk
+    netd/soulx_netd.c       privileged vmnet bridge daemon (Host-only / Bridged); its own CMake target → libexec
+    netd_client.c           asks the soulx_netd daemon to open a bridge (SoulX itself stays unprivileged)
+    vm_archive.c            export/import an instance as a `.soulxvm` file (Apple Archive)
+    log.c                   macOS logging (DEBUG dropped unless -v / SOULX_VERBOSE=1)
     network_capture.c               network capture: the QMP client behind `network-capture-start` / `network-capture-stop`
     adb.c, console.c        private adb server, emulator console client
     input.c, hidkbd.c       multi-touch over the console, the virtual USB keyboard (uhid)
@@ -130,6 +146,7 @@ source/
     mcp.c                   the MCP server (`soulx mcp`), its settings and audit log
     window/                 SoulX's window (AppKit + Metal)
       app.m                 app delegate and menus
+      launch.c              starting and finding SoulX's window process
       window_controller.m   window, toolbar, status bar
       screen_view.m         Metal view, mouse/keyboard to Android
       frames.c              shared-memory frame reader, NEON BGRA→RGBA, frame pump
@@ -158,6 +175,14 @@ SoulX window ──────┘                   ├── adb (private serv
 path. Every engine and adb process gets an environment that points into `~/.soulx-android` (`HOME`, `ANDROID_HOME`,
 `ANDROID_AVD_HOME`, `ANDROID_EMULATOR_HOME`, `TMPDIR`, the adb port). Instances use console ports 5600–5680, above the
 range other adb servers scan. Processes are started with `posix_spawn` and argument arrays, never through a shell.
+
+Each instance picks an **engine**. The default **legacy** engine is Google's 37.2.12 above. The **angle** engine
+(`engine=angle`) is a self-built patched emulator — package `emulator-angle` 37.3.6-soulx1, built from AOSP
+`emu-main-dev` by `scripts/build_angle_emulator.sh` with the patches in `patches/` — started with `-feature GuestAngle`
+and `-systemui-renderer skiavk`. GuestAngle gives the guest OpenGL ES 3.1 (Apple's host GLES caps at 3.0), which the
+Google Play / Google-account sign-in page needs; skiavk composes the guest UI straight on Vulkan so app UI renders
+correctly. `runtime.c` downloads it on demand (`soulx setup --engine angle`) and pins the host Vulkan driver to
+MoltenVK (`ANDROID_EMU_VK_SELECT_ICD=moltenvk`). See `k_angle_package` in `runtime.c` and the angle branch in `engine.c`.
 
 **GPU modes** map to engine arguments in `engine.c`:
 - `host` is `-gpu host`: the GLES translator on Apple OpenGL (on Metal), and Vulkan on MoltenVK.
@@ -200,6 +225,12 @@ start (`--pcap`); its frontend service (`PatchCapture`) is switched off in the e
 `-feature NetsimCliUi` or `--dev`. The engine's `-tcpdump` and the console's `network capture` hook only `mynet`
 (`eth0`, cellular), which Android leaves idle while WiFi is up. A netsimd exits by itself within seconds of its last
 device going away, so SoulX does not stop it.
+
+**Networking modes.** Each instance picks NAT (the default), Host-only or Bridged. NAT keeps the emulator's own
+user-mode networking and needs no helper. Host-only and Bridged route the instance through `soulx_netd` vmnet bridges:
+`engine.c` passes `-wifi-socket` (and, for Host-only, a second `-net-socket` for the radio) pointing at loopback ports
+the helper opens. `soulx net install` sets up the privileged `soulx_netd` LaunchDaemon once (an admin prompt), and
+`netd_client.c` asks it to open each bridge, so SoulX itself stays unprivileged.
 
 **Why no Quick Boot.** Resuming a snapshot broke guest GPU sync objects: thousands of `glClientWaitSync` errors appeared,
 and the engine leaked memory without bound. A fresh boot stays flat.

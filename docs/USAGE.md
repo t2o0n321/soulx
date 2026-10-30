@@ -99,13 +99,14 @@ same pixels as a `soulx screenshot`.
 
 ### Setup and diagnostics
 
-**`soulx setup [--image play|google|play16k] [--accept-licenses] [--keep-downloads] [--force]`**
+**`soulx setup [--image play|google|play16k] [--engine angle] [--accept-licenses] [--keep-downloads] [--force]`**
 Downloads and installs SoulX's Android runtime into `$SOULX_HOME`: the engine, adb and an Android 17 system image.
 Android Studio is never needed or used.
 
 | option | meaning |
 |---|---|
 | `--image KEY` | the system image to install: `play` (Android 17, Google Play; the default), `google` (Android 17, Google APIs; `adb root` works) or `play16k` (Android 17 QPR1, Google Play, 16 KB memory pages) |
+| `--engine angle` | also download the **Angle** engine (for Google Play sign-in; see [Emulator engine](#emulator-engine)) — about 417 MB, from a GitHub Release |
 | `--accept-licenses` | accept the Android SDK licenses without asking |
 | `--keep-downloads` | keep the downloaded zip files in `$SOULX_HOME/downloads` |
 | `--force` | reinstall packages that are already installed |
@@ -140,7 +141,10 @@ or `default`.
 | `--data GB` | storage for apps and data in GB, 4–64 |
 | `--image KEY` | system image: `play` (default), `google` or `play16k` (it must be installed with `soulx setup --image`) |
 | `--gpu MODE` | `host` (default), `host-novulkan`, `software` or `metal` (see [GPU modes](#gpu-modes)) |
+| `--engine ENG` | `legacy` (the default) or `angle` — the Angle engine for Google Play sign-in (see [Emulator engine](#emulator-engine)) |
 | `--dns IP[,IP]` | DNS servers to use instead of the Mac's (up to 4) |
+| `--network-mode M` | `nat` (the default), `host` (Host-only) or `bridged` (see [Networking](#networking)) |
+| `--bridge-if IF` | for `host`/`bridged`: which Mac network interface to bridge (default: the active one) |
 | `--no-stay-awake` | let the screen turn off while the instance runs |
 | `--no-lean` | keep every preinstalled Google app running (see [Lean Android](#lean-android)) |
 | `--fps N` | frame rate cap, 20–60 (default 60; see [Frame rate cap](#frame-rate-cap)) |
@@ -162,7 +166,10 @@ the next start).
 | `--res WxH` | screen size; its shape sets the orientation unless `--landscape` or `--portrait` is given |
 | `--data GB` | storage, larger than now, up to 64 |
 | `--gpu MODE` | `host`, `host-novulkan`, `software` or `metal` |
+| `--engine ENG` | `legacy` or `angle` (see [Emulator engine](#emulator-engine)) |
 | `--dns IP[,IP]`, `--no-dns` | DNS servers, or back to the Mac's |
+| `--network-mode M` | `nat`, `host` or `bridged` (see [Networking](#networking)) |
+| `--bridge-if IF` | the Mac interface to bridge for `host`/`bridged` |
 | `--stay-awake`, `--no-stay-awake` | keep the screen on, or not |
 | `--lean`, `--no-lean` | [Lean Android](#lean-android) on or off |
 | `--fps N` | frame rate cap, 20–60 (60 = no cap) |
@@ -190,6 +197,8 @@ another with `--name`. Scripts go to the new instance's scripts folder; keymaps 
 
 **`soulx status [name] [--json]`** shows one instance: state, Android version, hardware, screen, adb serial, engine pid,
 uptime, memory use and log file.
+
+**`soulx usage [name]`** shows a running instance's guest RAM and storage use, measured inside Android.
 
 **`soulx start [name] [--headless] [--cold] [--no-wait] [--timeout S]`** starts an instance, waits until Android has
 booted, then opens the window.
@@ -322,6 +331,10 @@ verbatim. Examples: `soulx adb shell getprop ro.build.version.release`, `soulx a
 with 1 when the console answers KO. Examples: `soulx console geo fix -122.084 37.422` (longitude, then latitude),
 `soulx console power capacity 15`.
 
+**`soulx net <status|install|uninstall>`** manages the privileged network helper (`soulx_netd`, a LaunchDaemon) that
+[Host-only and Bridged](#networking) networking use. NAT, the default, does not use it, and SoulX installs the helper
+by itself the first time an instance needs it.
+
 ## Instances and their settings
 
 Each instance is an independent Android 17 phone with its own apps and data. Choose an instance with `-i NAME` or
@@ -360,6 +373,26 @@ Images newer than Android 17 (API 37.0) use 16 KB memory pages only. Many games 
 pages, including many Unity, Unreal and Cocos builds. On a 16 KB image those games run in a slower compatibility mode
 with a warning dialog, or crash. That is why the default stays on API 37.0, the newest image with 4 KB pages.
 
+### Networking
+
+Each instance chooses how it reaches the network:
+
+| mode | what it does |
+|---|---|
+| `nat` (default) | the engine's own user-mode networking; no helper needed |
+| `host` (Host-only) | a private network shared with the Mac through a vmnet bridge, isolated from the internet |
+| `bridged` | the instance joins the Mac's own network through a vmnet bridge, with its own address on the LAN |
+
+```bash
+soulx config default --network-mode host               # then: soulx restart default
+soulx config default --network-mode bridged --bridge-if en0
+soulx config default --network-mode nat                # back to the default
+```
+
+`host` and `bridged` route traffic through a small privileged helper (`soulx_netd`), installed once as a LaunchDaemon —
+SoulX sets it up the first time you use either mode, or you can run [`soulx net install`](#low-level-access).
+`--bridge-if` picks which Mac interface to bridge (the active one by default). `nat` needs no helper.
+
 ### The instance file
 
 Settings are stored in `~/.soulx-android/instances/<name>.conf`, one `key=value` per line. Change them with
@@ -378,7 +411,10 @@ changes take effect at the next start.
 | `dpi` | 120–640 | screen density |
 | `landscape` | `0` or `1` | landscape screen |
 | `gpu` | `host`, `host-novulkan`, `software`, `metal` | [GPU mode](#gpu-modes) |
+| `engine` | `legacy`, `angle` | [emulator engine](#emulator-engine) (default `legacy`) |
 | `dns` | empty, or up to 4 IPs separated by commas | DNS servers (empty: the Mac's) |
+| `network_mode` | `nat`, `host`, `bridged` | [networking](#networking) (default `nat`) |
+| `bridge_if` | empty, or an interface name | the Mac interface to bridge for `host`/`bridged` |
 | `stay_awake` | `0` or `1` | keep the screen on while running |
 | `lean` | `0` or `1` | [Lean Android](#lean-android) (default `1`; a file without the key counts as `1`) |
 | `fps` | 20–60 | [frame rate cap](#frame-rate-cap) (default `60`) |
@@ -401,6 +437,30 @@ and letters go missing. It also draws Android's blur black, so SoulX turns windo
 the first `metal` start SoulX prepares the engine's ANGLE library and keeps the original as `libGLESv2.dylib.google`.
 
 To change the mode of an existing instance: `soulx config <name> --gpu MODE`, then `soulx restart <name>`.
+
+## Emulator engine
+
+Separate from the GPU mode, each instance chooses which **emulator engine** runs Android:
+
+| engine | what it is | when to use it |
+|---|---|---|
+| `legacy` (default) | the stock Android Emulator (37.2.12) that `soulx setup` installs | everyday use; nothing extra to download |
+| `angle` | a patched emulator (37.3.6, built from AOSP) started with `-feature GuestAngle`, which gives the **guest** OpenGL ES 3.1 | when an app needs GLES 3.1 — most visibly **Google Play / Google-account sign-in**, whose page does not render on the standard engine because Apple's host OpenGL caps at 3.0 |
+
+The Angle engine is **not** the `metal` GPU mode. `metal` points the standard engine's ANGLE library at Metal on the
+*host* and corrupts textures; the Angle *engine* is a different emulator that runs ANGLE *inside the guest* and composes
+its UI through Vulkan (`skiavk`), so sign-in pages and app UI render correctly.
+
+It is a separate ~417 MB download, fetched on demand the first time an instance uses it (never without asking):
+
+```bash
+soulx setup --engine angle              # download the Angle engine once
+soulx create play --engine angle        # a new instance on the Angle engine
+soulx config default --engine angle     # or switch one (then: soulx restart default)
+soulx config default --engine legacy    # back to the standard engine
+```
+
+Your apps, data, GPU mode and networking are the same on either engine.
 
 ## Frame rate cap
 
@@ -743,7 +803,7 @@ Everything lives in `~/.soulx-android`. Set `SOULX_HOME` to use a different fold
 
 | folder | contents |
 |---|---|
-| `sdk/` | the runtime: `emulator/`, `platform-tools/`, `system-images/…`, with install markers in `sdk/.soulx/` |
+| `sdk/` | the runtime: `emulator/`, `emulator-angle/` (the Angle engine, if installed), `platform-tools/`, `system-images/…`, with install markers in `sdk/.soulx/` |
 | `avd/` | device definitions written by SoulX (`soulx_<name>.ini`, `soulx_<name>.avd/` with the disks) |
 | `instances/` | instance settings (`<name>.conf`) |
 | `keymaps/` | game keymaps |
