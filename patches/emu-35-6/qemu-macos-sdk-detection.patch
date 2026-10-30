@@ -1,0 +1,55 @@
+diff --git a/android/scripts/unix/gen-android-sdk-toolchain.sh b/android/scripts/unix/gen-android-sdk-toolchain.sh
+index 0c753d5a..2e172e7c 100755
+--- a/android/scripts/unix/gen-android-sdk-toolchain.sh
++++ b/android/scripts/unix/gen-android-sdk-toolchain.sh
+@@ -519,7 +519,7 @@ prepare_build_for_darwin() {
+     OSX_SDK_SUPPORTED="${OSX_REQUIRED} 10.15 10.16 11.0 11.1 11.2 11.3 11.4 11.5 11.6 12.0 12.1 12.3 13.0 13.1 13.3 14.0 14.2 14.3 14.4 14.5 15.0 15.1 15.2"
+     OSX_XCODE=$(xcodebuild -version | tr '\n' ' ')
+     OSX_SDK_INSTALLED_LIST=$(xcodebuild -showsdks 2>/dev/null | \
+-            egrep --color=never -o " macosx\d+.\d+$" | sed -e "s/.*macosx//g" | sort -n | \
++            grep --color=never -oE 'macosx[0-9]+\.[0-9]+' | sed -e "s/macosx//g" | sort -n -u | \
+             tr '\n' ' ')
+     if [ -z "$OSX_SDK_INSTALLED_LIST" ]; then
+         panic "Please install XCode for compatible with os version: $OSX_VERSION on this machine!"
+@@ -533,6 +533,16 @@ prepare_build_for_darwin() {
+         fi
+     done
+ 
++    # SoulX: emu-35-6's OSX_SDK_SUPPORTED list stops at 15.2 and predates newer
++    # macOS. If none of the listed SDKs is installed, fall back to the newest SDK
++    # actually present so the build works on macOS 26+ without editing the list.
++    if [ -z "$OSX_SDK_VERSION" ]; then
++        OSX_SDK_VERSION=$(echo "$OSX_SDK_INSTALLED_LIST" | tr ' ' '\n' | grep -E '^[0-9]' | sort -n | tail -1)
++        if [ -n "$OSX_SDK_VERSION" ]; then
++            log "OSX: no SDK from the supported list installed; using newest installed SDK $OSX_SDK_VERSION"
++        fi
++    fi
++
+     # Extract the Xcode version, and use version sort to stack the installed version
+     # on top of what you have. If your version is to low it ends up on top.
+     OSX_XCODE_VERSION=$(xcodebuild -version | egrep 'Xcode (\d+.\d+)' | sed 's/Xcode //g')
+@@ -789,8 +799,8 @@ prepare_build_for_darwin_aarch64() {
+     OSX_DEPLOYMENT_TARGET=10.16
+     OSX_SDK_SUPPORTED="10.11 10.12 10.13 10.14 10.15 10.16 11.0 11.1 11.2 11.3 11.4 11.5 11.6 12.0 12.1 12.3 13.0 13.1 13.3 14.0 14.2 14.3 14.4 14.5 15.0 15.1 15.2"
+     OSX_SDK_INSTALLED_LIST=$(xcodebuild -showsdks 2>/dev/null | \
+-            grep --color=never macosx | sed -e "s/.*macosx10\.//g" | sort -n | \
+-            sed -e 's/^/10./g' | tr '\n' ' ')
++            grep --color=never -oE 'macosx[0-9]+\.[0-9]+' | sed -e "s/macosx//g" | sort -n -u | \
++            tr '\n' ' ')
+     if [ -z "$OSX_SDK_INSTALLED_LIST" ]; then
+         panic "Please install XCode on this machine!"
+     fi
+@@ -802,6 +812,13 @@ prepare_build_for_darwin_aarch64() {
+             OSX_SDK_VERSION=$POSSIBLE_OSX_SDK_VERSION
+         fi
+     done
++    # SoulX: emu-35-6's OSX_SDK_SUPPORTED list stops at 15.2 and predates newer
++    # macOS. If none of the listed SDKs is installed, fall back to the newest SDK
++    # actually present so the build works on macOS 26+ without editing the list.
++    if [ -z "$OSX_SDK_VERSION" ]; then
++        OSX_SDK_VERSION=$(echo "$OSX_SDK_INSTALLED_LIST" | tr ' ' '\n' | grep -E '^[0-9]' | sort -n | tail -1)
++        [ -n "$OSX_SDK_VERSION" ] && log "OSX: no SDK from the supported list installed; using newest installed SDK $OSX_SDK_VERSION"
++    fi
+     log "OSX: Using SDK version $OSX_SDK_VERSION"
+     if [ -z "$OSX_SDK_VERSION" ]; then
+         panic "No supported OSX SDKs found on the machine (Need any of: [$OSX_SDK_SUPPORTED], have: [$OSX_SDK_INSTALLED_LIST])"

@@ -12,6 +12,9 @@ final class AppModel: ObservableObject {
     @Published var stats: [String: StatsSample.Entry] = [:]
     @Published var host: StatsSample.Host?
     @Published var usage: [String: UsageInfo] = [:]       // guest RAM/storage, polled slowly (adb reads)
+    @Published var guestIP: [String: String] = [:]        // each instance's wlan0 address, polled slowly
+    @Published var publicIP: String?                      // the Mac's public (egress) IP — what NAT/Bridged guests appear as
+    @Published var signInGPU: [String: GPUMode] = [:]     // instance -> GPU to restore after the Google sign-in helper
     @Published var busy: [String: String] = [:]          // instance -> what is going on ("Starting…")
     @Published var alert: String?
     @Published var setupLog: [String] = []
@@ -26,6 +29,12 @@ final class AppModel: ObservableObject {
     /// Instance name -> apps, as last seen while it was running. Lets AppsSection show a stopped
     /// instance's apps instead of just a "start it" message; cleared when the instance is deleted.
     @Published private(set) var appsCache: [String: [InstalledApp]] = [:]
+
+    // Host-only / Bridged networking: the privileged helper's install state (nil = unknown) and, for Bridged,
+    // the Mac network interfaces an instance can join.
+    @Published var netHelperInstalled: Bool?
+    @Published var macInterfaces: [String] = []
+    @Published var installingNet = false
 
     let cli: SoulXCLI?
     private var statsProcess: Process?
@@ -139,6 +148,47 @@ final class AppModel: ObservableObject {
         let r = await perform(name, L("Restarting…"), ["restart", name])
         if r?.ok == true { await activateWindowSoon(name) }     // a restart keeps whatever window mode it had
     }
+
+    // MARK: Google sign-in helper
+    // The Google / Play sign-in page is a Chromium WebView whose GPU process crashes under host graphics on this
+    // emulator. Sign in once under software (compatibility) graphics, then switch back — no root, no tamper, just a
+    // render mode; the account is saved for good.
+    func beginGoogleSignIn(_ name: String) async {
+        guard signInGPU[name] == nil, let inst = instance(name) else { return }
+        let original = inst.settings.gpu
+        signInGPU[name] = original
+        if original != .software {
+            if inst.running { await stop(name) }
+            await perform(name, L("Switching to compatibility graphics…"), ["config", name, "--gpu", "software", "--json"])
+        }
+        await start(name)
+        Task { await watchGoogleSignIn(name) }
+    }
+
+    func finishGoogleSignIn(_ name: String) async {
+        guard let original = signInGPU.removeValue(forKey: name) else { return }
+        if original != .software {
+            if instance(name)?.running == true { await stop(name) }
+            await perform(name, L("Switching graphics back…"), ["config", name, "--gpu", original.rawValue, "--json"])
+        }
+        await start(name)
+    }
+
+    /// While the helper is active, watch for a Google account and switch graphics back automatically once one is
+    /// added, so the user does not have to come back and click.
+    private func watchGoogleSignIn(_ name: String) async {
+        while signInGPU[name] != nil {
+            try? await Task.sleep(nanoseconds: 4_000_000_000)
+            guard signInGPU[name] != nil else { return }
+            if await hasGoogleAccount(name) { await finishGoogleSignIn(name); return }
+        }
+    }
+
+    private func hasGoogleAccount(_ name: String) async -> Bool {
+        guard let cli else { return false }
+        let r = await cli.run(["-i", name, "shell", "dumpsys account"])
+        return r.ok && r.stdout.contains("type=com.google")
+    }
     /// Opens the instance's window, or brings it to the front if it is already open (behind the launcher,
     /// most often). The CLI's own "bring to front" runs as a background helper process, which macOS is prone to
     /// ignore; asking directly from the launcher (the app the user just clicked in) is what actually works.
@@ -179,8 +229,14 @@ final class AppModel: ObservableObject {
 
     func create(_ name: String, _ s: InstanceSettings) async -> Bool {
         let r = await perform(name, L("Creating…"), s.createArguments(name: name))
-        if r?.ok == true { selection = name; return true }
-        return false
+        guard r?.ok == true else { return false }
+        selection = name
+        // Root needs a boot + ramdisk patch, so set it up after the instance exists. Run it detached so the
+        // create sheet closes right away and the step-by-step progress shows on the instance page (busy[name]).
+        if s.rooted {
+            Task { await applyRoot(name, enable: true) }
+        }
+        return true
     }
 
     /// Saves changed settings; returns a note for the user (or nil when nothing changed or it failed).
@@ -352,6 +408,87 @@ final class AppModel: ObservableObject {
                                                                       userInfo: nil, deliverImmediately: true)
     }
 
+    /// Opens a macOS terminal running an interactive Android shell for the instance — `soulx shell` (uid 2000),
+    /// or a root shell (`su`) when |root| is true. The instance must be running (adb needs a live device).
+    /// We cannot run this through SoulXCLI (its process has no tty); instead we hand Terminal a tiny script that
+    /// execs the CLI, so the user gets a real interactive shell.
+    func openShell(_ name: String, root: Bool) {
+        guard let cli else { return }
+        // Single-quote for /bin/zsh so paths or names with spaces survive; '\'' escapes an embedded quote.
+        func shq(_ s: String) -> String { "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'" }
+
+        // `-t` forces adb to allocate a pty so `su` opens an interactive root shell rather than exiting at once.
+        var command = "exec \(shq(cli.executable.path)) -i \(shq(name)) shell"
+        if root { command += " -t su" }
+
+        var script = "#!/bin/zsh\n"
+        // Match the launcher's own SOULX_HOME (a fresh Terminal login shell would otherwise use the default home).
+        if let home = ProcessInfo.processInfo.environment["SOULX_HOME"], !home.isEmpty {
+            script += "export SOULX_HOME=\(shq(home))\n"
+        }
+        // Land the user straight in the Android shell: name the window, then wipe Terminal's login banner, the
+        // echoed .command path and the user's prompt (screen + scrollback) so the session opens clean.
+        let title = root ? "SoulX · \(name) · root" : "SoulX · \(name)"
+        script += "printf '\\033]0;%s\\007' \(shq(title))\n"
+        script += "clear; printf '\\033[3J'\n"
+        script += command + "\n"
+
+        let safe = String(name.map { ($0.isLetter || $0.isNumber || $0 == "-" || $0 == "_") ? $0 : "_" })
+        let file = FileManager.default.temporaryDirectory
+            .appendingPathComponent("soulx-shell-\(safe)\(root ? "-root" : "").command")
+        do {
+            try script.write(to: file, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: file.path)
+        } catch {
+            alert = error.localizedDescription
+            return
+        }
+        let open = Process()
+        open.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+        open.arguments = ["-a", "Terminal", file.path]
+        do { try open.run() } catch { alert = error.localizedDescription }
+    }
+
+    // --- Host-only / Bridged network helper (soulx_netd) ---
+
+    private struct NetStatus: Decodable { let installed: Bool }
+
+    /// Refresh whether the privileged network helper is installed, and the Mac interfaces Bridged can join.
+    func refreshNetHelper() async {
+        macInterfaces = Self.listMacInterfaces()
+        netHelperInstalled = (try? await cli?.json(NetStatus.self, ["net", "status", "--json"]))?.installed
+    }
+
+    /// Install the network helper (one administrator-password prompt). Returns true on success.
+    @discardableResult
+    func installNetHelper() async -> Bool {
+        guard let cli, !installingNet else { return false }
+        installingNet = true
+        defer { installingNet = false }
+        let r = await cli.run(["net", "install"])
+        await refreshNetHelper()
+        if netHelperInstalled != true {
+            alert = r.message.isEmpty ? L("Could not set up the network helper.") : r.message
+        }
+        return netHelperInstalled == true
+    }
+
+    /// Up, non-loopback `en*` interfaces that have an IPv4 address — the ones Bridged networking can join.
+    static func listMacInterfaces() -> [String] {
+        var out: [String] = [], seen = Set<String>()
+        var ifap: UnsafeMutablePointer<ifaddrs>?
+        guard getifaddrs(&ifap) == 0, let first = ifap else { return [] }
+        defer { freeifaddrs(ifap) }
+        for p in sequence(first: first, next: { $0.pointee.ifa_next }) {
+            guard let sa = p.pointee.ifa_addr, sa.pointee.sa_family == UInt8(AF_INET) else { continue }
+            let flags = Int32(p.pointee.ifa_flags)
+            guard flags & IFF_UP != 0, flags & IFF_LOOPBACK == 0 else { continue }
+            let name = String(cString: p.pointee.ifa_name)
+            if name.hasPrefix("en"), !seen.contains(name) { seen.insert(name); out.append(name) }
+        }
+        return out.sorted()
+    }
+
     // --- AI control (MCP) ---
 
     @Published var mcp: McpConfig?
@@ -396,6 +533,32 @@ final class AppModel: ObservableObject {
     /// The phone's own RAM and storage use (an adb read; poll it slowly, unlike the per-second `stats`).
     func usageInfo(_ name: String) async -> UsageInfo? {
         try? await cli?.json(UsageInfo.self, ["usage", "-i", name, "--json"])
+    }
+
+    /// The instance's wlan0 address (an adb read). It reflects the network mode: a 10.0.2.x NAT address,
+    /// a 192.168.x host-only address, or a real LAN address when bridged.
+    func fetchGuestIP(_ name: String) async -> String? {
+        guard let cli else { return nil }
+        let r = await cli.run(["-i", name, "shell", "ip -4 addr show wlan0"])
+        guard r.ok else { return nil }
+        return Self.firstIPv4(in: r.stdout)
+    }
+
+    /// The Mac's public (egress) IP — what a NAT or bridged guest appears as on the internet. Host-only has none.
+    func refreshPublicIP() async {
+        guard let url = URL(string: "https://api.ipify.org") else { return }
+        let req = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 6)
+        guard let (data, _) = try? await URLSession.shared.data(for: req) else { return }
+        let s = String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+        if !s.isEmpty, Self.firstIPv4(in: s) == s { publicIP = s }
+    }
+
+    /// The first dotted-quad in some text (optionally on an `inet` line), e.g. "10.0.2.16".
+    private static func firstIPv4(in text: String) -> String? {
+        let re = try! NSRegularExpression(pattern: #"(?:inet\s+)?(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})"#)
+        let ns = text as NSString
+        guard let m = re.firstMatch(in: text, range: NSRange(location: 0, length: ns.length)) else { return nil }
+        return ns.substring(with: m.range(at: 1))
     }
 
     /// Installs the Android runtime (`soulx setup --accept-licenses`), streaming its progress into setupLog.

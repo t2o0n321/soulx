@@ -57,6 +57,7 @@ if [[ "$skip_build" == 0 ]]; then
 fi
 launcher_bin="$(cd launcher && swift build -c release --arch arm64 --show-bin-path)/SoulXLauncher"
 [[ -x build/macos/soulx ]] || die "build/macos/soulx is missing (run without --skip-build)"
+[[ -x build/macos/soulx_netd ]] || die "build/macos/soulx_netd is missing (run without --skip-build)"
 [[ -x "$launcher_bin" ]] || die "the launcher is not built: $launcher_bin"
 
 # --- Assemble ------------------------------------------------------------------
@@ -65,6 +66,7 @@ rm -rf -- "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Helpers" "$app/Contents/Resources"
 cp "$launcher_bin" "$app/Contents/MacOS/SoulX"
 cp build/macos/soulx "$app/Contents/Helpers/soulx"
+cp build/macos/soulx_netd "$app/Contents/Helpers/soulx_netd"   # vmnet bridge helper (Host-only / Bridged)
 
 iconset="$dist/SoulX.iconset"
 rm -rf -- "$iconset"
@@ -103,6 +105,7 @@ plutil -lint "$app/Contents/Info.plist" >/dev/null
 # Inside out: the helper first, then the bundle.
 echo "=== Signing (ad hoc) ==="
 codesign --force --timestamp=none --sign - "$app/Contents/Helpers/soulx"
+codesign --force --timestamp=none --sign - "$app/Contents/Helpers/soulx_netd"
 codesign --force --timestamp=none --sign - "$app"
 codesign --verify --strict --deep "$app"
 

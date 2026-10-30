@@ -887,6 +887,28 @@ static uint64_t runtime_download_bytes(const char* image_key, bool only_missing)
     return total;
 }
 
+// True when the instance's engine can start: the stock one always (it is part of the runtime); the angle
+// engine once its emulator is in place (downloaded on demand, or installed by hand while unpublished).
+static bool engine_present(const SoulXInstanceConf* conf) {
+    if (strcmp(conf->engine, "angle") != 0) {
+        return true;
+    }
+    char exe[PATH_MAX];
+    return soulx_tool_path("emulator-angle", exe, sizeof exe) == 0 && access(exe, X_OK) == 0;
+}
+
+// How to get the angle engine for an instance that uses it (it is never downloaded without asking).
+static void explain_angle_engine(const SoulXInstanceConf* conf, int level) {
+    const SoulXPackage* p = soulx_runtime_engine("angle");
+    if (p && soulx_runtime_available(p)) {
+        soulx_log(level, "'%s' uses the angle engine, which is not installed yet; install it once (about %.0f MB "
+                 "download) with: soulx setup --engine angle", conf->name, (double)p->size / 1e6);
+    } else {
+        soulx_log(level, "'%s' uses the angle engine, which is not installed and not available for download yet",
+                 conf->name);
+    }
+}
+
 // True when the runtime for the instance's image is installed; otherwise explains how to get it
 // (never downloads gigabytes without the user asking for it).
 static bool runtime_ready_or_explain(const SoulXInstanceConf* conf) {
@@ -896,6 +918,10 @@ static bool runtime_ready_or_explain(const SoulXInstanceConf* conf) {
         return false;
     }
     if (soulx_runtime_ready(img->key)) {
+        if (!engine_present(conf)) {
+            explain_angle_engine(conf, SOULX_LOG_ERROR);
+            return false;
+        }
         return true;
     }
     const SoulXPackage* def = soulx_runtime_default_image();
@@ -1341,12 +1367,13 @@ static int run_legacy(const CliLegacy* lg, int argc, char** argv, const CliGloba
 // Commands: getting started
 // ---------------------------------------------------------------------------
 
-enum { SETUP_IMAGE, SETUP_ACCEPT, SETUP_KEEP, SETUP_FORCE };
+enum { SETUP_IMAGE, SETUP_ACCEPT, SETUP_KEEP, SETUP_FORCE, SETUP_ENGINE };
 static const CliOpt k_setup_opts[] = {
     [SETUP_IMAGE]  = { "image",           0, true  },
     [SETUP_ACCEPT] = { "accept-licenses", 0, false },
     [SETUP_KEEP]   = { "keep-downloads",  0, false },
     [SETUP_FORCE]  = { "force",           0, false },
+    [SETUP_ENGINE] = { "engine",          0, true  },
 };
 
 static int cmd_setup(const CliCommand* self, const CliArgs* a, const CliGlobal* g) {
@@ -1373,15 +1400,24 @@ static int cmd_setup(const CliCommand* self, const CliArgs* a, const CliGlobal* 
     if (!img) {
         return unknown_image_error(self, key);
     }
+    const char* engine = a->val[SETUP_ENGINE];
+    if (engine && strcmp(engine, "legacy") != 0 && strcmp(engine, "angle") != 0) {
+        return usage_error(self, "--engine must be legacy or angle (got '%s')", engine);
+    }
     SoulXSetupOpts so = {
         .accept_licenses = a->val[SETUP_ACCEPT] != NULL,
         .keep_downloads  = a->val[SETUP_KEEP] != NULL,
         .force           = a->val[SETUP_FORCE] != NULL,
+        .engine          = engine,
     };
     if (soulx_runtime_setup(img->key, &so) != 0) {
         return g_soulx_interrupted ? CLI_EXIT_INTR : CLI_EXIT_FAIL;
     }
-    printf("\nNext: soulx play game.apk   (creates an instance, installs your game and launches it)\n");
+    if (engine && strcmp(engine, "angle") == 0) {
+        printf("\nNext: soulx create NAME --engine angle   (or switch one: soulx config NAME --engine angle)\n");
+    } else {
+        printf("\nNext: soulx play game.apk   (creates an instance, installs your game and launches it)\n");
+    }
     return CLI_EXIT_OK;
 }
 
@@ -1512,7 +1548,7 @@ static int cmd_play(const CliCommand* self, const CliArgs* a, const CliGlobal* g
 enum {
     CREATE_PROFILE, CREATE_LANDSCAPE, CREATE_CORES, CREATE_RAM, CREATE_RES, CREATE_DPI, CREATE_DATA,
     CREATE_IMAGE, CREATE_GPU, CREATE_DNS, CREATE_NO_STAY_AWAKE, CREATE_NO_LEAN, CREATE_FPS, CREATE_NO_AUDIO,
-    CREATE_ROOT
+    CREATE_ROOT, CREATE_NETWORK_MODE, CREATE_BRIDGE_IF, CREATE_ENGINE
 };
 static const CliOpt k_create_opts[] = {
     [CREATE_PROFILE]       = { "profile",       0, true  },
@@ -1530,6 +1566,9 @@ static const CliOpt k_create_opts[] = {
     [CREATE_FPS]           = { "fps",           0, true  },
     [CREATE_NO_AUDIO]      = { "no-audio",      0, false },
     [CREATE_ROOT]          = { "root",          0, false },
+    [CREATE_NETWORK_MODE]  = { "network-mode",  0, true  },
+    [CREATE_BRIDGE_IF]     = { "bridge-if",     0, true  },
+    [CREATE_ENGINE]        = { "engine",        0, true  },
 };
 _Static_assert(NOPTS(k_create_opts) <= CLI_MAX_OPTS, "too many create options");
 
@@ -1615,8 +1654,23 @@ static int cmd_create(const CliCommand* self, const CliArgs* a, const CliGlobal*
     if (a->val[CREATE_NO_AUDIO]) {
         c.audio = false;
     }
-    if (a->val[CREATE_ROOT]) {
-        c.rooted = true;
+    // Root is applied after the instance exists (it needs a boot + ramdisk patch), not as a conf flag here,
+    // so a failed patch never leaves a "rooted but no ramdisk" instance behind.
+    bool want_root = a->val[CREATE_ROOT] != NULL;
+    if ((v = a->val[CREATE_NETWORK_MODE])) {
+        if (strcmp(v, "nat") != 0 && strcmp(v, "host") != 0 && strcmp(v, "bridged") != 0) {
+            return usage_error(self, "--network-mode must be nat, host or bridged (got '%s')", v);
+        }
+        copy_str(c.network_mode, sizeof c.network_mode, v);
+    }
+    if ((v = a->val[CREATE_BRIDGE_IF]) && !copy_str(c.bridge_if, sizeof c.bridge_if, v)) {
+        return usage_error(self, "--bridge-if name is too long (got '%s')", v);
+    }
+    if ((v = a->val[CREATE_ENGINE])) {
+        if (strcmp(v, "legacy") != 0 && strcmp(v, "angle") != 0) {
+            return usage_error(self, "--engine must be legacy or angle (got '%s')", v);
+        }
+        copy_str(c.engine, sizeof c.engine, v);
     }
     if (a->val[CREATE_LANDSCAPE]) {
         make_landscape(&c);
@@ -1639,6 +1693,25 @@ static int cmd_create(const CliCommand* self, const CliArgs* a, const CliGlobal*
     printf("Created instance '%s' (id %d): %s, %d CPUs, %d MB RAM, %d GB storage, %dx%d @ %d dpi%s\n",
            c.name, c.id, android, c.cores, c.ram_mb, c.data_gb, c.width, c.height, c.dpi,
            c.landscape ? " (landscape)" : "");
+    if (!engine_present(&c)) {
+        explain_angle_engine(&c, SOULX_LOG_WARN);
+    }
+
+    // --root: set up Magisk now (boots, patches the ramdisk, stops). soulx_magisk_patch sets rooted=1 only
+    // on success, so a failure leaves a clean, un-rooted instance the user can retry with 'soulx root'.
+    if (want_root) {
+        if (!soulx_runtime_ready(c.image)) {
+            soulx_log(SOULX_LOG_WARN, "install the runtime first (soulx setup), then enable root: soulx root %s",
+                     c.name);
+            return CLI_EXIT_OK;
+        }
+        if (soulx_magisk_patch(c.name) != 0) {
+            soulx_log(SOULX_LOG_ERROR, "the instance was created but root setup failed; retry with: soulx root %s",
+                     c.name);
+            return CLI_EXIT_FAIL;
+        }
+    }
+
     // (when the runtime is missing, soulx_mac_create already said how to install it)
     if (soulx_runtime_ready(c.image)) {
         printf("Next: soulx start %s   (or: soulx play -i %s game.apk)\n", c.name, c.name);
@@ -1718,6 +1791,12 @@ static void json_instance(FILE* f, const SoulXInstanceConf* c, bool running, con
     json_str(f, c->gpu);
     fputs(", \"dns\": ", f);
     json_str(f, c->dns);
+    fputs(", \"network_mode\": ", f);
+    json_str(f, c->network_mode[0] ? c->network_mode : "nat");
+    fputs(", \"bridge_if\": ", f);
+    json_str(f, c->bridge_if);
+    fputs(", \"engine\": ", f);
+    json_str(f, c->engine[0] ? c->engine : "legacy");
     fprintf(f, ", \"stay_awake\": %s, \"lean\": %s, \"fps\": %d, \"audio\": %s, \"rooted\": %s, \"created\": ",
             c->stay_awake ? "true" : "false", c->lean ? "true" : "false", c->fps, c->audio ? "true" : "false",
             c->rooted ? "true" : "false");
@@ -1802,7 +1881,8 @@ static void json_instance(FILE* f, const SoulXInstanceConf* c, bool running, con
 enum {
     CONFIG_PROFILE, CONFIG_LANDSCAPE, CONFIG_PORTRAIT, CONFIG_CORES, CONFIG_RAM, CONFIG_RES, CONFIG_DPI,
     CONFIG_DATA, CONFIG_GPU, CONFIG_DNS, CONFIG_NO_DNS, CONFIG_STAY_AWAKE, CONFIG_NO_STAY_AWAKE, CONFIG_LEAN,
-    CONFIG_NO_LEAN, CONFIG_FPS, CONFIG_AUDIO, CONFIG_NO_AUDIO, CONFIG_ROOT, CONFIG_NO_ROOT, CONFIG_JSON
+    CONFIG_NO_LEAN, CONFIG_FPS, CONFIG_AUDIO, CONFIG_NO_AUDIO, CONFIG_ROOT, CONFIG_NO_ROOT,
+    CONFIG_NETWORK_MODE, CONFIG_BRIDGE_IF, CONFIG_ENGINE, CONFIG_JSON
 };
 static const CliOpt k_config_opts[] = {
     [CONFIG_PROFILE]       = { "profile",       0, true  },
@@ -1825,9 +1905,17 @@ static const CliOpt k_config_opts[] = {
     [CONFIG_NO_AUDIO]      = { "no-audio",      0, false },
     [CONFIG_ROOT]          = { "root",          0, false },
     [CONFIG_NO_ROOT]       = { "no-root",       0, false },
+    [CONFIG_NETWORK_MODE]  = { "network-mode",  0, true  },
+    [CONFIG_BRIDGE_IF]     = { "bridge-if",     0, true  },
+    [CONFIG_ENGINE]        = { "engine",        0, true  },
     [CONFIG_JSON]          = { "json",          0, false },
 };
 _Static_assert(NOPTS(k_config_opts) <= CLI_MAX_OPTS, "too many config options");
+
+enum { NET_JSON };
+static const CliOpt k_net_opts[] = {
+    [NET_JSON] = { "json", 0, false },
+};
 
 static void print_conf_text(const SoulXInstanceConf* c, bool running) {
     char android[CLI_CELL];
@@ -1974,10 +2062,28 @@ static int cmd_config(const CliCommand* self, const CliArgs* a, const CliGlobal*
     if (a->val[CONFIG_NO_AUDIO]) c.audio = false;
     if (a->val[CONFIG_ROOT]) c.rooted = true;
     if (a->val[CONFIG_NO_ROOT]) c.rooted = false;
+    if ((v = a->val[CONFIG_NETWORK_MODE])) {
+        if (strcmp(v, "nat") != 0 && strcmp(v, "host") != 0 && strcmp(v, "bridged") != 0) {
+            return usage_error(self, "--network-mode must be nat, host or bridged (got '%s')", v);
+        }
+        copy_str(c.network_mode, sizeof c.network_mode, v);
+    }
+    if ((v = a->val[CONFIG_BRIDGE_IF]) && !copy_str(c.bridge_if, sizeof c.bridge_if, v)) {
+        return usage_error(self, "--bridge-if name is too long (got '%s')", v);
+    }
+    if ((v = a->val[CONFIG_ENGINE])) {
+        if (strcmp(v, "legacy") != 0 && strcmp(v, "angle") != 0) {
+            return usage_error(self, "--engine must be legacy or angle (got '%s')", v);
+        }
+        copy_str(c.engine, sizeof c.engine, v);
+    }
 
     bool needs_restart = false;
     if (changing && soulx_mac_reconfigure(&c, &needs_restart) != 0) {
         return CLI_EXIT_FAIL;
+    }
+    if (a->val[CONFIG_ENGINE] && !engine_present(&c)) {
+        explain_angle_engine(&c, SOULX_LOG_WARN);
     }
 
     if (a->val[CONFIG_JSON]) {
@@ -3652,6 +3758,34 @@ static int cmd_logcat(const CliCommand* self, const CliArgs* a, const CliGlobal*
     return adb_with_words(t.serial, "logcat", a->pos, a->npos);
 }
 
+// Manage the privileged network helper (soulx_netd) used by Host-only / Bridged networking.
+static int cmd_net(const CliCommand* self, const CliArgs* a, const CliGlobal* g) {
+    (void)g;
+    bool json = a->val[NET_JSON] != NULL;
+    const char* sub = a->npos > 0 ? a->pos[0] : "status";
+    if (!strcmp(sub, "status")) {
+        bool inst = soulx_netd_installed();
+        if (json) printf("{\"installed\":%s}\n", inst ? "true" : "false");
+        else       printf("Network helper (Host-only / Bridged): %s\n", inst ? "installed" : "not installed");
+        return CLI_EXIT_OK;
+    }
+    if (!strcmp(sub, "install")) {
+        if (soulx_netd_installed()) {
+            if (!json) printf("The network helper is already installed.\n");
+            return CLI_EXIT_OK;
+        }
+        if (soulx_netd_install() != 0) return CLI_EXIT_FAIL;
+        if (!json) printf("Network helper installed.\n");
+        return CLI_EXIT_OK;
+    }
+    if (!strcmp(sub, "uninstall")) {
+        if (soulx_netd_uninstall() != 0) return CLI_EXIT_FAIL;
+        if (!json) printf("Network helper removed.\n");
+        return CLI_EXIT_OK;
+    }
+    return usage_error(self, "unknown command 'net %s' (use status, install or uninstall)", sub);
+}
+
 static int cmd_console(const CliCommand* self, const CliArgs* a, const CliGlobal* g) {
     if (a->npos == 0) {
         return usage_error(self, "which console command? e.g.: soulx console help");
@@ -4114,6 +4248,23 @@ static int cmd_runtime(const CliCommand* self, const CliArgs* a, const CliGlobal
         }
         putchar('}');
     }
+    // the emulator backends an instance can pick (not in "packages": the angle engine is optional and
+    // downloaded on demand by `soulx setup --engine angle`, so it never counts as missing runtime)
+    static const char* const engines[] = { "legacy", "angle" };
+    printf("], \"engines\": [");
+    for (size_t i = 0; i < sizeof engines / sizeof engines[0]; i++) {
+        const SoulXPackage* p = soulx_runtime_engine(engines[i]);
+        char exe[PATH_MAX];
+        bool present = p && soulx_tool_path(i ? "emulator-angle" : "emulator", exe, sizeof exe) == 0 &&
+                       access(exe, X_OK) == 0;
+        printf("%s{\"engine\": \"%s\", \"key\": ", i ? ", " : "", engines[i]);
+        json_str_or_null(stdout, p ? p->key : NULL);
+        printf(", \"version\": ");
+        json_str_or_null(stdout, p ? p->version : NULL);
+        printf(", \"download_bytes\": %llu, \"available\": %s, \"installed\": %s, \"present\": %s}",
+               (unsigned long long)(p ? p->size : 0), p && soulx_runtime_available(p) ? "true" : "false",
+               p && soulx_runtime_installed(p) ? "true" : "false", present ? "true" : "false");
+    }
     printf("]}\n");
     return CLI_EXIT_OK;
 }
@@ -4222,7 +4373,7 @@ static int cmd_help(const CliCommand* self, const CliArgs* a, const CliGlobal* g
 
 static const CliCommand k_commands[] = {
     { "setup", cmd_setup, GROUP_START, "setup", "install SoulX's Android 17 runtime (one-time download)",
-      "soulx setup [--image play|google|play16k] [--accept-licenses] [--keep-downloads] [--force]\n"
+      "soulx setup [--image play|google|play16k] [--engine angle] [--accept-licenses] [--keep-downloads] [--force]\n"
       "\n"
       "Downloads and installs SoulX's own Android runtime into $SOULX_HOME (default ~/.soulx-android):\n"
       "the Android Emulator engine, adb (platform-tools) and an Android 17 system image. Android\n"
@@ -4232,6 +4383,9 @@ static const CliCommand k_commands[] = {
       "                        play     Android 17, Google Play (default)\n"
       "                        google   Android 17, Google APIs (adb root available)\n"
       "                        play16k  Android 17 QPR1, Google Play, 16 KB memory pages\n"
+      "  --engine angle      also install the angle engine (SoulX's patched emulator for Google sign-in\n"
+      "                      pages; about 400 MB, only needed by instances created with --engine angle).\n"
+      "                      Once installed, later setups keep it up to date too\n"
       "  --accept-licenses   accept the Android SDK licenses without asking\n"
       "  --keep-downloads    keep the downloaded zip files in $SOULX_HOME/downloads\n"
       "  --force             reinstall packages that are already installed\n",
@@ -4270,6 +4424,9 @@ static const CliCommand k_commands[] = {
       "  --image KEY       system image: play (default), google or play16k (see 'soulx help setup')\n"
       "  --gpu MODE        host (default: the Mac's GPU), host-novulkan, software (slow; for games that\n"
       "                    render incorrectly) or metal (experimental: OpenGL ES through ANGLE on Metal)\n"
+      "  --engine E        emulator backend: legacy (default: the stock Google emulator) or angle (a\n"
+      "                    patched build whose guest renders GLES 3.1 through ANGLE so the Google Play\n"
+      "                    sign-in WebView works; the angle build is installed by 'soulx setup')\n"
       "  --dns IP[,IP]     DNS servers to use instead of the Mac's (up to 4)\n"
       "  --no-stay-awake   let the screen turn off while the instance runs\n"
       "  --no-lean         keep every preinstalled Google app running (by default SoulX disables the ones\n"
@@ -4300,6 +4457,7 @@ static const CliCommand k_commands[] = {
       "  --dpi N           screen density, 120-640\n"
       "  --data GB         storage for apps and data in GB, up to 64 (only larger than now)\n"
       "  --gpu MODE        host, host-novulkan, software or metal (see 'soulx help create')\n"
+      "  --engine E        legacy or angle (see 'soulx help create'); changing it needs a restart\n"
       "  --dns IP[,IP]     DNS servers to use instead of the Mac's (up to 4)\n"
       "  --no-dns          use the Mac's DNS servers again\n"
       "  --stay-awake      keep the screen on while the instance runs\n"
@@ -4580,6 +4738,16 @@ static const CliCommand k_commands[] = {
       "  soulx console power capacity 15\n"
       "  soulx console help\n",
       NO_OPTS, CLI_STOP_AT_POSITIONAL, true },
+
+    { "net", cmd_net, GROUP_TOOLS, "net <status|install|uninstall>", "set up the Host-only / Bridged network helper",
+      "soulx net <status|install|uninstall> [--json]\n"
+      "\n"
+      "Host-only and Bridged networking route an instance through an Apple vmnet interface, which needs a\n"
+      "small privileged helper installed as a LaunchDaemon. NAT (the default) does not use it.\n"
+      "  status      whether the helper is installed\n"
+      "  install     install it (one-time administrator prompt)\n"
+      "  uninstall   remove it (administrator prompt)\n",
+      k_net_opts, NOPTS(k_net_opts), CLI_INTERLEAVED, false },
 
     { "network-capture-start", cmd_network_capture_start, GROUP_TOOLS, "network-capture-start", "start recording network traffic",
       "soulx network-capture-start [-i NAME] [--json]\n"

@@ -337,6 +337,67 @@ static void test_setup_validation(void) {
     CHECK(soulx_runtime_setup("bogus", &opts) == -1);
     CHECK(soulx_runtime_setup("emulator", &opts) == -1);       // not a system image
     CHECK(soulx_runtime_setup("platform-tools", NULL) == -1);
+    CHECK(soulx_runtime_setup("emulator-angle", NULL) == -1);  // an engine, not a system image
+    opts.engine = "bogus";
+    CHECK(soulx_runtime_setup("play", &opts) == -1);           // unknown engine
+    const SoulXPackage* angle = soulx_runtime_find("emulator-angle");
+    if (angle && !soulx_runtime_available(angle)) {
+        opts.engine = "angle";
+        CHECK(soulx_runtime_setup("play", &opts) == -1);       // asked for, but not published yet
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The angle engine: optional, outside the base package table
+// ---------------------------------------------------------------------------
+
+static void test_angle_package(void) {
+    const SoulXPackage* a = soulx_runtime_find("emulator-angle");
+    const SoulXPackage* eng = soulx_runtime_find("emulator");
+    CHECK(a != NULL && eng != NULL);
+    if (!a || !eng) return;
+    CHECK(a->kind == SOULX_PKG_ENGINE);
+    CHECK(strcmp(a->install_rel, "emulator-angle") == 0 && strcmp(a->zip_root, "emulator") == 0);
+    CHECK(a->url && strncmp(a->url, "https://github.com/", 19) == 0);
+    CHECK(a->url && strlen(a->url) > 4 && strcmp(a->url + strlen(a->url) - 4, ".zip") == 0);
+    CHECK(a->version && a->version[0] && a->description && a->description[0]);
+    CHECK(soulx_runtime_available(a) == (a->size > 0 && is_lower_hex40(a->sha1)));
+    CHECK(!soulx_runtime_available(NULL));
+
+    CHECK(soulx_runtime_engine("angle") == a);
+    CHECK(soulx_runtime_engine("legacy") == eng);
+    CHECK(soulx_runtime_engine("") == eng);
+    CHECK(soulx_runtime_engine(NULL) == eng);
+
+    size_t n = 0;
+    const SoulXPackage* pk = soulx_runtime_packages(&n);
+    for (size_t i = 0; pk && i < n; i++) CHECK(&pk[i] != a);   // never part of the base runtime
+
+    char buf[PATH_MAX], want[PATH_MAX];
+    CHECK(soulx_tool_path("emulator-angle", buf, sizeof(buf)) == 0);
+    home_path(want, sizeof(want), "sdk/emulator-angle/emulator");
+    CHECK(strcmp(buf, want) == 0);
+
+    // installed like the stock engine, in its own directory, with its own marker
+    CHECK(!soulx_runtime_installed(a));
+    char dir[PATH_MAX], exe[PATH_MAX];
+    home_path(dir, sizeof(dir), "sdk/emulator-angle/qemu/darwin-aarch64");
+    CHECK(soulx_mkdirs(dir) == 0);
+    CHECK(make_executable(want, "#!fake angle engine\n"));
+    CHECK(soulx_runtime_write_marker(a) == 0);
+    CHECK(!soulx_runtime_installed(a));              // launcher present, but the qemu binaries are missing
+    home_path(exe, sizeof(exe), "sdk/emulator-angle/qemu/darwin-aarch64/qemu-system-aarch64");
+    CHECK(make_executable(exe, "#!fake qemu\n"));
+    home_path(exe, sizeof(exe), "sdk/emulator-angle/qemu/darwin-aarch64/qemu-system-aarch64-headless");
+    CHECK(make_executable(exe, "#!fake qemu headless\n"));
+    CHECK(soulx_runtime_installed(a));
+    CHECK(soulx_runtime_print_status() == 0);
+
+    home_path(dir, sizeof(dir), "sdk/emulator-angle");
+    CHECK(soulx_rmtree(dir) == 0);
+    CHECK(!soulx_runtime_installed(a));
+    home_path(dir, sizeof(dir), "sdk/.soulx/emulator-angle.installed");
+    CHECK(unlink(dir) == 0);
 }
 
 static void test_adb_key(const char* self_exe) {
@@ -423,6 +484,7 @@ int main(int argc, char** argv) {
     test_markers();
     test_license_extraction();
     test_setup_validation();
+    test_angle_package();
     test_adb_key(self_exe[0] ? self_exe : NULL);
     test_doctor();
 

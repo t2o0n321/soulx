@@ -118,6 +118,16 @@ struct DisplayCard: View {
             if locked { lockMark }
         } content: {
             Group {
+                SettingRow(L("Emulator engine"),
+                           caption: L("Angle lets Google Play sign-in work (newer in-app graphics). Standard suits everything else.")) {
+                    ValueMenu(engineLabel(settings.engine)) {
+                        Picker("", selection: $settings.engine) {
+                            Text(engineLabel(.legacy)).tag(EmulatorEngine.legacy)
+                            Text(engineLabel(.angle)).tag(EmulatorEngine.angle)
+                        }
+                        .pickerStyle(.inline).labelsHidden()
+                    }
+                }
                 SettingRow(L("Graphics"), caption: L("Try Compatibility if a game shows black or broken graphics.")) {
                     ValueMenu(gpuLabel(settings.gpu)) {
                         Picker("", selection: $settings.gpu) {
@@ -151,6 +161,13 @@ struct DisplayCard: View {
         case .hostNoVulkan: return L("Compatibility (OpenGL ES)")
         case .software: return L("Software (slow)")
         case .metal: return L("Metal (experimental)")
+        }
+    }
+
+    private func engineLabel(_ e: EmulatorEngine) -> String {
+        switch e {
+        case .legacy: return L("Standard")
+        case .angle: return L("Angle (Play sign-in)")
         }
     }
 }
@@ -191,6 +208,13 @@ struct SystemCard: View {
             .disabled(locked)
             if let inst = instance {
                 rootToggle(inst)
+                googleSignInRow(inst)
+            } else {
+                // Create flow: a plain choice that becomes `--root` at creation (no live instance to patch yet).
+                SettingRow(L("Root (Magisk)"),
+                           caption: L("Create the instance with Magisk root. You can turn it off later.")) {
+                    Toggle("", isOn: $settings.rooted).labelsHidden().toggleStyle(.switch).controlSize(.small)
+                }
             }
         }
     }
@@ -210,6 +234,24 @@ struct SystemCard: View {
         }
     }
 
+    // Sign in to Google under compatibility (software) graphics — the sign-in page is a WebView that crashes under
+    // host graphics on this emulator. Switches back on its own once the account is added. The banner on the instance
+    // page guides the rest; this is just the entry point.
+    @ViewBuilder private func googleSignInRow(_ inst: Instance) -> some View {
+        let active = model.signInGPU[inst.name] != nil
+        SettingRow(L("Google sign-in"),
+                   caption: active ? L("Compatibility graphics on — sign in, then this switches back.")
+                                   : L("The sign-in page needs compatibility graphics; this switches to it and back. No root.")) {
+            if active {
+                Button(L("Finish & switch back")) { Task { await model.finishGoogleSignIn(inst.name) } }
+                    .buttonStyle(.pill)
+            } else {
+                Button(L("Sign in…")) { Task { await model.beginGoogleSignIn(inst.name) } }
+                    .buttonStyle(.pill)
+            }
+        }
+    }
+
     private func rootCaption(_ inst: Instance) -> String {
         if model.busy[inst.name] != nil { return L("Grants root access via Magisk. Downloads and patches on first enable.") }
         switch inst.rootStatus {
@@ -226,4 +268,70 @@ struct SystemCard: View {
 private var lockMark: some View {
     Image(systemName: "lock.fill").font(.system(size: 11)).foregroundStyle(.secondary)
         .help(L("Settings cannot change while the instance runs. Stop it to change them."))
+}
+
+/// How the instance reaches the network: NAT (default), Host-only or Bridged. Host-only and Bridged route
+/// through the soulx_netd helper (a one-time admin install); changes apply at the instance's next start.
+struct NetworkCard: View {
+    @Binding var settings: InstanceSettings
+    var locked = false
+    @EnvironmentObject var model: AppModel
+
+    var body: some View {
+        SectionCard(L("Network"), icon: "network") {
+            if locked { lockMark }
+        } content: {
+            Group {
+                SettingRow(L("Mode"), caption: modeCaption) {
+                    ValueMenu(modeLabel(settings.networkMode)) {
+                        Picker("", selection: $settings.networkMode) {
+                            Text(modeLabel(.nat)).tag(NetworkMode.nat)
+                            Text(modeLabel(.host)).tag(NetworkMode.host)
+                            Text(modeLabel(.bridged)).tag(NetworkMode.bridged)
+                        }
+                        .pickerStyle(.inline).labelsHidden()
+                    }
+                }
+                if settings.networkMode == .bridged {
+                    SettingRow(L("Bridge to"),
+                               caption: L("The Mac network the instance joins, getting its own address on your LAN.")) {
+                        ValueMenu(settings.bridgeIf.isEmpty ? L("Automatic") : settings.bridgeIf) {
+                            Picker("", selection: $settings.bridgeIf) {
+                                Text(L("Automatic")).tag("")
+                                ForEach(model.macInterfaces, id: \.self) { Text($0).tag($0) }
+                            }
+                            .pickerStyle(.inline).labelsHidden()
+                        }
+                    }
+                }
+            }
+            .disabled(locked)
+            if settings.networkMode.needsHelper, model.netHelperInstalled == false {
+                SettingRow(L("Network helper"),
+                           caption: L("Host-only and Bridged need a small helper. Installing it asks for your password once.")) {
+                    if model.installingNet {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Button(L("Install…")) { Task { await model.installNetHelper() } }.buttonStyle(.pill)
+                    }
+                }
+            }
+        }
+        .task(id: settings.networkMode) { if settings.networkMode.needsHelper { await model.refreshNetHelper() } }
+    }
+
+    private var modeCaption: String {
+        switch settings.networkMode {
+        case .nat:     return L("The default. Private, with internet through the Mac.")
+        case .host:    return L("Reaches the Mac and other host-only instances, but not the internet.")
+        case .bridged: return L("A real device on your LAN with its own IP; other devices can reach it.")
+        }
+    }
+    private func modeLabel(_ m: NetworkMode) -> String {
+        switch m {
+        case .nat:     return L("NAT (default)")
+        case .host:    return L("Host-only")
+        case .bridged: return L("Bridged")
+        }
+    }
 }

@@ -1,28 +1,27 @@
-# Build output
-build/
 
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-*~
-
-# macOS
 .DS_Store
-
-# Logs and temporary files
-*.log
-*.tmp
-*.temp
-
-# Personal/sensitive files
-*.pem
-*.key
-secrets/
 .env
 .env.local
-
+.idea/
+.vscode/
+*.key
+*.log
+*.pem
+*.swo
+*.swp
+*.temp
+*.tmp
+*~
+# Build output
+# IDE
+# Logs and temporary files
+# macOS
+# Personal/sensitive files
 # Swift launcher
+build/
 launcher/.build/
 launcher/.swiftpm/
+secrets/
+external/emu-build/
+external/gfxstream/
+external/gfxstream-356/

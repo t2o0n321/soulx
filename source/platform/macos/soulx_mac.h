@@ -233,11 +233,14 @@ typedef struct {
     bool accept_licenses;        // non-interactive acceptance (--accept-licenses)
     bool keep_downloads;         // keep zips in downloads/ after install
     bool force;                  // reinstall even when markers match
+    const char* engine;          // NULL / "legacy" / "angle": "angle" also installs the angle engine (on demand)
 } SoulXSetupOpts;
 
-const SoulXPackage* soulx_runtime_packages(size_t* count);
-const SoulXPackage* soulx_runtime_find(const char* key);
+const SoulXPackage* soulx_runtime_packages(size_t* count);      // the base runtime (never the angle engine)
+const SoulXPackage* soulx_runtime_find(const char* key);        // also "emulator-angle"
 const SoulXPackage* soulx_runtime_default_image(void);           // "play"
+const SoulXPackage* soulx_runtime_engine(const char* engine);   // "angle" -> emulator-angle, else the stock engine
+bool  soulx_runtime_available(const SoulXPackage* p);            // published for download (the angle engine may not be)
 bool  soulx_runtime_installed(const SoulXPackage* p);            // marker sha1 matches and install dir exists
 bool  soulx_runtime_ready(const char* image_key);               // engine + platform-tools + that image installed
 int   soulx_runtime_setup(const char* image_key, const SoulXSetupOpts* opts);   // 0 ok
@@ -270,12 +273,17 @@ typedef struct {
     bool landscape;              // hw.initialOrientation=landscape (width > height panel)
     char gpu[24];                // "metal" (default) | "host" | "host-novulkan" | "software" (see soulx_mac_start)
     char dns[128];               // "" = host resolvers, else "8.8.8.8,8.8.4.4"
+    char network_mode[12];       // "" / "nat" (default, user-mode NAT) | "host" (vmnet host-only) |
+                                 // "bridged" (vmnet bridged); host/bridged route wlan0 through soulx_netd
+    char bridge_if[16];          // bridged mode: host interface to bridge (e.g. "en0"); "" = default
     bool stay_awake;             // keep the screen on while running (svc power stayon true)
     bool lean;                   // disable the preinstalled Google apps games never need, fewer cached
                                  // background apps (post-boot; off enables those apps again)
     int  fps;                    // guest display refresh rate (hw.lcd.vsync), 20-60: games render at most this often
     bool audio;                  // sound output (hw.audioOutput); off saves the audio thread's CPU
     bool rooted;                 // Magisk root: boot with a patched ramdisk (magisk-ramdisk.img in AVD dir)
+    char engine[12];             // emulator backend: "" / "legacy" (default, stock Google emulator) |
+                                 // "angle" (patched gfxstream + GuestAngle: GLES 3.1 for Play sign-in WebView)
     char created[32];            // ISO-8601 UTC
     int  last_port;              // console port of the previous run (0 = none); soulx_mac_start tries it first so
                                  // the adb serial stays stable across stop/start (persisted as last_port=)
@@ -288,6 +296,9 @@ typedef struct {
     char  started[32];           // ISO-8601 UTC
     char  network_capture_path[1024];       // the file the network capture in progress writes to ("" = not recording); set and
                                  // cleared live by soulx_mac_network_capture_start/stop, not chosen at boot
+    int   bridge_port;           // soulx_netd bridge's loopback port for host/bridged networking (0 = none),
+                                 // set at start so stop can tear the bridge down
+    int   bridge_port2;          // second bridge (the radio/eth0) for Host-only isolation; 0 = none
 } SoulXRunState;
 
 void soulx_conf_defaults(SoulXInstanceConf* c, const char* name);   // balanced profile, default image
@@ -373,6 +384,15 @@ int soulx_mac_require_running(const char* name_or_id, SoulXInstanceConf* conf, S
                                                        // resolves + checks running; prints a helpful error otherwise
 void soulx_mac_cleanup_idle(void);                      // stops SoulX's private adb server (port 5137) when no SoulX
                                                        // instance has a live engine; safe to call at any time
+
+// netd_client.c - talks to the soulx_netd privileged helper (a LaunchDaemon) that bridges an instance's
+// wlan0 to an Apple vmnet interface for Host-only / Bridged networking. Installing it is a one-time admin
+// prompt; after that these need no privileges. The emulator then uses -wifi-socket connect=127.0.0.1:<port>.
+bool soulx_netd_installed(void);                        // daemon reachable (control socket answers PING)
+int  soulx_netd_install(void);                          // one-time admin-authorized LaunchDaemon install; 0 ok
+int  soulx_netd_uninstall(void);                        // admin-authorized removal of the LaunchDaemon; 0 ok
+int  soulx_netd_start_bridge(const char* mode, const char* bridge_if, int* port_out); // "host"|"bridged"; 0 ok
+int  soulx_netd_stop_bridge(int port);                  // 0 ok, best effort
 
 // ---------------------------------------------------------------------------
 // network_capture.c - recording an instance's WiFi traffic to a .pcap file, started and stopped while it runs

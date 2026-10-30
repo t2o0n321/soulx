@@ -1,0 +1,123 @@
+diff --git a/host/frame_buffer.cpp b/host/frame_buffer.cpp
+index ed4b2b9..1a49875 100644
+--- a/host/frame_buffer.cpp
++++ b/host/frame_buffer.cpp
+@@ -953,6 +953,17 @@ class FrameBuffer::Impl : public gfxstream::base::EventNotificationSupport<Frame
+     gfxstream::base::WorkerThread<Readback> m_readbackThread;
+     std::atomic_bool m_readbackThreadStarted = false;
+ 
++    // SoulX: onPost readback (-share-vid) on a Vulkan-only host. With -feature GuestAngle there is no GL
++    // emulation and so no GL ReadbackWorker: onPost reads the posted ColorBuffer through Vulkan into
++    // onPost::img (readbackVkFrame) and the readback thread's GetPixels copies that frame (copyVkFrame).
++    // m_vkFrames has its own lock and never takes m_lock: the post thread holds m_lock while it waits for
++    // GetPixels.
++    bool vkOnlyReadback() const { return !m_emulationGl && m_emulationVk; }
++    bool readbackVkFrame(uint32_t displayId, onPost& entry, ColorBuffer* cb);
++    void copyVkFrame(uint32_t displayId, void* pixels, uint32_t bytes);
++    std::mutex m_vkFramesLock;
++    std::map<uint32_t, std::pair<const unsigned char*, size_t>> m_vkFrames;  // displayId -> onPost::img
++
+     std::string m_graphicsAdapterVendor;
+     std::string m_graphicsAdapterName;
+     std::string m_graphicsApiVersion;
+@@ -1670,6 +1681,23 @@ FrameBuffer::Impl::~Impl() {
+ 
+ WorkerProcessingResult FrameBuffer::Impl::sendReadbackWorkerCmd(const Readback& readback) {
+     ensureReadbackWorker();
++    if (!m_readbackWorker && vkOnlyReadback()) {
++        // SoulX: no GL ReadbackWorker on a Vulkan-only host; onPost reads the frames (readbackVkFrame).
++        switch (readback.cmd) {
++        case ReadbackCmd::GetPixels:
++            copyVkFrame(readback.displayId, readback.pixelsOut, readback.bytes);
++            return WorkerProcessingResult::Continue;
++        case ReadbackCmd::DelRecordDisplay: {
++            std::lock_guard<std::mutex> guard(m_vkFramesLock);
++            m_vkFrames.erase(readback.displayId);    // before setPostCallback frees onPost::img
++            return WorkerProcessingResult::Continue;
++        }
++        case ReadbackCmd::Exit:
++            return WorkerProcessingResult::Stop;
++        default:                                     // Init, AddRecordDisplay: nothing to set up
++            return WorkerProcessingResult::Continue;
++        }
++    }
+     switch (readback.cmd) {
+     case ReadbackCmd::Init:
+         m_readbackWorker->init();
+@@ -2813,6 +2841,12 @@ AsyncResult FrameBuffer::Impl::postImpl(HandleType p_colorbuffer, Post::Completi
+                 if (status == ReadbackWorker::DoNextReadbackResult::OK_READY_FOR_READ) {
+                     doPostCallback(iter.second.img, iter.first);
+                 }
++            } else if (vkOnlyReadback()) {
++                // SoulX: Vulkan-only host (-feature GuestAngle): read the posted ColorBuffer
++                // through Vulkan, so -share-vid keeps feeding SoulX's window.
++                if (readbackVkFrame(iter.first, iter.second, cb.get())) {
++                    doPostCallback(iter.second.img, iter.first);
++                }
+             } else {
+                 ensureReadbackWorker();
+                 if (m_readbackWorker) {
+@@ -2841,6 +2875,43 @@ void FrameBuffer::Impl::doPostCallback(void* pixels, uint32_t displayId) {
+                     GL_RGBA, GL_UNSIGNED_BYTE, (unsigned char*)pixels);
+ }
+ 
++// SoulX: one onPost frame on a Vulkan-only host, read on the post thread into entry.img. Vulkan returns the
++// image as stored (no conversion), so R and B are swapped when the consumer wants the other order:
++// B,G,R,A when readBgra (the emulator's frame sharing behind -share-vid asks for it), else R,G,B,A.
++// False when the frame cannot be read this way (then nothing is posted and the previous frame stays).
++bool FrameBuffer::Impl::readbackVkFrame(uint32_t displayId, onPost& entry, ColorBuffer* cb) {
++    const uint32_t w = entry.width;
++    const uint32_t h = entry.height;
++    const size_t bytes = (size_t)w * h * 4;
++    const GfxstreamFormat format = cb->getFormat();
++    if (cb->getWidth() != w || cb->getHeight() != h ||
++        (format != GfxstreamFormat::R8G8B8A8_UNORM && format != GfxstreamFormat::B8G8R8A8_UNORM)) {
++        static std::atomic_bool sWarned{false};
++        if (!sWarned.exchange(true)) {
++            GFXSTREAM_ERROR("SoulX: cannot read back ColorBuffer %ux%u (format %d) for display %u (%ux%u)",
++                            cb->getWidth(), cb->getHeight(), (int)format, displayId, w, h);
++        }
++        return false;
++    }
++    std::lock_guard<std::mutex> guard(m_vkFramesLock);
++    cb->readToBytes(0, 0, (int)w, (int)h, format, entry.img, bytes);
++    if ((format == GfxstreamFormat::B8G8R8A8_UNORM) != entry.readBgra) {
++        for (unsigned char *p = entry.img, *end = entry.img + bytes; p < end; p += 4) {
++            std::swap(p[0], p[2]);
++        }
++    }
++    m_vkFrames[displayId] = {entry.img, bytes};
++    return true;
++}
++
++// SoulX: GetPixels on a Vulkan-only host: the frame readbackVkFrame read last (nothing before the first one).
++void FrameBuffer::Impl::copyVkFrame(uint32_t displayId, void* pixels, uint32_t bytes) {
++    std::lock_guard<std::mutex> guard(m_vkFramesLock);
++    const auto it = m_vkFrames.find(displayId);
++    if (it == m_vkFrames.end() || !pixels) return;
++    memcpy(pixels, it->second.first, std::min<size_t>(bytes, it->second.second));
++}
++
+ void FrameBuffer::Impl::getPixels(void* pixels, uint32_t bytes, uint32_t displayId) {
+     const auto& iter = m_onPost.find(displayId);
+     if (iter == m_onPost.end()) {
+@@ -2860,6 +2931,9 @@ void FrameBuffer::Impl::flushReadPipeline(int displayId) {
+     }
+ 
+     ensureReadbackWorker();
++    if (!m_readbackWorker) {
++        return;     // SoulX: Vulkan-only host: onPost reads every frame synchronously (readbackVkFrame)
++    }
+ 
+     const auto status = m_readbackWorker->flushPipeline(displayId);
+     if (status == ReadbackWorker::FlushResult::OK_READY_FOR_READ) {
+@@ -2870,6 +2944,9 @@ void FrameBuffer::Impl::flushReadPipeline(int displayId) {
+ void FrameBuffer::Impl::ensureReadbackWorker() {
+ #if GFXSTREAM_ENABLE_HOST_GLES
+     if (!m_readbackWorker) {
++        if (vkOnlyReadback()) {
++            return;     // SoulX: no GL ReadbackWorker on a Vulkan-only host (see readbackVkFrame)
++        }
+         ENSURE_GL_EMULATION_VOID();
+         m_readbackWorker = m_emulationGl->getReadbackWorker();
+     }

@@ -245,6 +245,7 @@ struct InstanceDetailView: View {
     @State private var volume: VolumeInfo?
     @State private var volumeLevel: Double = 0          // Android's steps (0...max), like the SoulX window's slider
     @State private var draggingVolume = false
+    @State private var advancedOpen = false             // the advanced settings group starts collapsed
 
     init(instance: Instance) {
         self.instance = instance
@@ -266,17 +267,31 @@ struct InstanceDetailView: View {
                 // on the left, the settings on the right. Each block sizes itself from the width it is offered
                 // (like CSS grid / flex-wrap), so a narrow window gets one column, never a clipped page.
                 SplitRow(ratio: 1, spacing: Self.gap, minWidth: 820) {
+                    // Left: what you use (apps, scripts, a shell).
                     VStack(spacing: Self.gap) {
                         AppsSection(instance: instance)
                         ScriptsSection(instance: instance)
-                        SystemCard(settings: $edited, locked: instance.running, instance: instance)
+                        ShellSection(instance: instance)
                     }
+                    // Right: the few settings most people change.
                     VStack(spacing: Self.gap) {
                         BasicSettingsCard(settings: $edited,
                                           recommended: Profile.recommended(hostMemoryGB: model.hostMemoryGB),
                                           locked: instance.running)
-                        HardwareCard(settings: $edited, minDataGB: instance.dataGB, locked: instance.running)
                         DisplayCard(settings: $edited, locked: instance.running)
+                    }
+                }
+                // The rest, folded away by default; full width in two balanced columns when opened.
+                AdvancedDisclosure(open: $advancedOpen)
+                if advancedOpen {
+                    SplitRow(ratio: 1, spacing: Self.gap, minWidth: 820) {
+                        VStack(spacing: Self.gap) {
+                            HardwareCard(settings: $edited, minDataGB: instance.dataGB, locked: instance.running)
+                            NetworkCard(settings: $edited, locked: instance.running)
+                        }
+                        VStack(spacing: Self.gap) {
+                            SystemCard(settings: $edited, locked: instance.running, instance: instance)
+                        }
                     }
                 }
             }
@@ -299,6 +314,7 @@ struct InstanceDetailView: View {
         }
         .task(id: instance.running) { if instance.running { await followVolume() } }
         .task(id: instance.running) { if instance.running { await followUsage() } }
+        .task(id: instance.running) { if instance.running { await followPublicIP() } }
         .confirmationDialog(L("Delete this instance and everything on it (apps and game data)?"),
                             isPresented: $confirmDelete) {
             Button(L("Delete"), role: .destructive) { Task { await model.delete(instance.name) } }
@@ -472,8 +488,25 @@ struct InstanceDetailView: View {
                       host: s?.memoryMB)
             usageCard(icon: "internaldrive", label: L("Storage"), used: u?.storageUsedMB, total: u?.storageTotalMB,
                       host: u?.hostStorageMB)
+            StatCard(icon: "wifi", label: L("Emulator IP"), note: netModeLabel,
+                     value: model.guestIP[instance.name] ?? "—",
+                     copy: model.guestIP[instance.name])
+            StatCard(icon: "globe", label: L("External IP"),
+                     value: instance.networkMode == "host" ? "—" : (model.publicIP ?? "…"),
+                     help: instance.networkMode == "host" ? L("Host-only has no internet access.")
+                                                           : L("Your Mac's public IP, which NAT and bridged guests share."),
+                     copy: instance.networkMode == "host" ? nil : model.publicIP)
             StatCard(icon: "clock", label: L("Uptime"), note: L("This session"),
                      value: s?.uptimeS.map(uptime) ?? "—")
+        }
+    }
+
+    /// The short mode name shown on the emulator-IP tile (NAT / Host-only / Bridged).
+    private var netModeLabel: String? {
+        switch instance.networkMode {
+        case "host": return L("Host-only")
+        case "bridged": return L("Bridged")
+        default: return L("NAT")
         }
     }
 
@@ -534,8 +567,40 @@ struct InstanceDetailView: View {
     private func followUsage() async {
         while !Task.isCancelled {
             if let u = await model.usageInfo(instance.name) { model.usage[instance.name] = u }
+            if let ip = await model.fetchGuestIP(instance.name) { model.guestIP[instance.name] = ip }
             try? await Task.sleep(nanoseconds: 8_000_000_000)
         }
+    }
+
+    // The Mac's public IP rarely changes and each read is an off-box request: refresh every 30 s, and only
+    // when this instance can actually reach the internet (host-only can't).
+    private func followPublicIP() async {
+        while !Task.isCancelled {
+            if instance.networkMode != "host" { await model.refreshPublicIP() }
+            try? await Task.sleep(nanoseconds: 30_000_000_000)
+        }
+    }
+}
+
+/// A low-key disclosure row that folds the advanced settings (hardware, system, network) away.
+struct AdvancedDisclosure: View {
+    @Binding var open: Bool
+    var body: some View {
+        Button {
+            withAnimation(.easeInOut(duration: 0.18)) { open.toggle() }
+        } label: {
+            HStack(spacing: 7) {
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 10, weight: .bold)).foregroundStyle(.secondary)
+                    .rotationEffect(.degrees(open ? 90 : 0))
+                Text(L("Advanced settings")).font(.system(size: 12, weight: .semibold)).foregroundStyle(.secondary)
+                Text(L("Hardware, system and network")).font(.system(size: 11)).foregroundStyle(.tertiary)
+                Spacer(minLength: 0)
+            }
+            .padding(.vertical, 6).padding(.horizontal, 4)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 }
 
@@ -544,6 +609,7 @@ struct CreateInstanceView: View {
     @Binding var isPresented: Bool
     @State private var name = ""
     @State private var settings = InstanceSettings.defaults(profile: .balanced)
+    @State private var advancedOpen = true
     @State private var working = false
     @FocusState private var nameFocused: Bool
 
@@ -563,16 +629,22 @@ struct CreateInstanceView: View {
         VStack(alignment: .leading, spacing: 0) {
             header
             nameField.padding(.horizontal, 22).padding(.top, 18)
-            // The settings in two columns, grouped under small headings, as in the design.
-            SplitRow(ratio: 1, spacing: 16, minWidth: 600) {
-                VStack(spacing: 14) {
+            // Basic settings up top, the rest folded under "Advanced" — the same split as the instance page.
+            VStack(spacing: 14) {
+                SplitRow(ratio: 1, spacing: 16, minWidth: 600) {
                     BasicSettingsCard(settings: $settings,
                                       recommended: Profile.recommended(hostMemoryGB: model.hostMemoryGB))
-                    HardwareCard(settings: $settings)
-                }
-                VStack(spacing: 14) {
                     DisplayCard(settings: $settings)
-                    SystemCard(settings: $settings)
+                }
+                AdvancedDisclosure(open: $advancedOpen)
+                if advancedOpen {
+                    SplitRow(ratio: 1, spacing: 16, minWidth: 600) {
+                        VStack(spacing: 14) {
+                            HardwareCard(settings: $settings)
+                            NetworkCard(settings: $settings)
+                        }
+                        SystemCard(settings: $settings)
+                    }
                 }
             }
             .environment(\.groupedCards, true)
@@ -665,6 +737,7 @@ struct SetupView: View {
                 header
                 if !repair { FirstRunSteps(current: 0) }
                 packagesCard
+                if !repair { networkSetupCard }
                 if model.settingUp || !model.setupLog.isEmpty { progressCard }
             }
             .padding(.horizontal, 20).padding(.top, 4).padding(.bottom, 20)
@@ -696,6 +769,33 @@ struct SetupView: View {
             Spacer(minLength: 16)
         }
         .padding(.vertical, 6)
+    }
+
+    // Optional first-run step (the helper for Host-only / Bridged; NAT works without it).
+    private var networkSetupCard: some View {
+        SectionCard(L("Networking (optional)"), icon: "network") {
+            VStack(alignment: .leading, spacing: 10) {
+                Text(L("Instances use NAT by default. To also offer Host-only and Bridged (a real IP on your LAN), SoulX installs a small helper, which asks for your password once. You can also turn it on later in an instance's Network settings."))
+                    .font(.system(size: 11)).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                HStack(spacing: 10) {
+                    if model.netHelperInstalled == true {
+                        Label(L("Network helper installed"), systemImage: "checkmark.circle.fill")
+                            .font(.system(size: 11)).foregroundStyle(.green)
+                    } else if model.installingNet {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Button(L("Install network helper…")) { Task { await model.installNetHelper() } }
+                            .buttonStyle(.pill)
+                        Text(L("Optional — skip to use NAT only.")).font(.system(size: 11)).foregroundStyle(.secondary)
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(16)
+            .overlay(alignment: .top) { Rectangle().fill(Color.primary.opacity(0.07)).frame(height: 1) }
+        }
+        .task { await model.refreshNetHelper() }
     }
 
     private var packagesCard: some View {

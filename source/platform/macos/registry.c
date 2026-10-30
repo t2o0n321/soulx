@@ -122,6 +122,7 @@ static bool field_ok(const char* s, size_t cap, const char* charset) {
 
 #define CHARSET_IMAGE "abcdefghijklmnopqrstuvwxyz0123456789_-"
 #define CHARSET_DNS   "0123456789abcdefABCDEF.:,"
+#define CHARSET_IFACE "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
 #define CHARSET_TIME  "0123456789TZ:.+-"
 
 static bool gpu_known(const char* g) {
@@ -361,6 +362,18 @@ static void conf_kv(const char* key, const char* value, void* ctx) {
         }
     } else if (!strcmp(key, "dns")) {
         conf_set_str(c->dns, sizeof(c->dns), key, value, CHARSET_DNS, cp->path);
+    } else if (!strcmp(key, "network_mode")) {
+        if (!strcmp(value, "nat") || !strcmp(value, "host") || !strcmp(value, "bridged"))
+            snprintf(c->network_mode, sizeof(c->network_mode), "%s", value);
+        else
+            soulx_log(SOULX_LOG_DEBUG, "%s: ignoring unknown network_mode=%s", cp->path, value);
+    } else if (!strcmp(key, "bridge_if")) {
+        conf_set_str(c->bridge_if, sizeof(c->bridge_if), key, value, CHARSET_IFACE, cp->path);
+    } else if (!strcmp(key, "engine")) {
+        if (!strcmp(value, "legacy") || !strcmp(value, "angle"))
+            snprintf(c->engine, sizeof(c->engine), "%s", value);
+        else
+            soulx_log(SOULX_LOG_DEBUG, "%s: ignoring unknown engine=%s", cp->path, value);
     } else if (!strcmp(key, "stay_awake")) {
         if (parse_bool(value, &b)) c->stay_awake = b;
     } else if (!strcmp(key, "lean")) {
@@ -456,8 +469,12 @@ static void last_id_note(int id) {
 
 int soulx_reg_save(const SoulXInstanceConf* c) {
     if (!c || c->id <= 0 || !soulx_name_valid(c->name)) return -1;
+    bool nm_ok = !c->network_mode[0] || !strcmp(c->network_mode, "nat") ||
+                 !strcmp(c->network_mode, "host") || !strcmp(c->network_mode, "bridged");
+    bool eng_ok = !c->engine[0] || !strcmp(c->engine, "legacy") || !strcmp(c->engine, "angle");
     if (!field_ok(c->image, sizeof(c->image), CHARSET_IMAGE) || !c->image[0] ||
-        !field_ok(c->dns, sizeof(c->dns), CHARSET_DNS) ||
+        !field_ok(c->dns, sizeof(c->dns), CHARSET_DNS) || !nm_ok || !eng_ok ||
+        !field_ok(c->bridge_if, sizeof(c->bridge_if), CHARSET_IFACE) ||
         !field_ok(c->created, sizeof(c->created), CHARSET_TIME) ||
         !memchr(c->gpu, '\0', sizeof(c->gpu)) || !gpu_known(c->gpu)) {
         soulx_log(SOULX_LOG_ERROR, "refusing to save instance '%s': invalid field value", c->name);
@@ -493,16 +510,22 @@ int soulx_reg_save(const SoulXInstanceConf* c) {
         "landscape=%d\n"
         "gpu=%s\n"
         "dns=%s\n"
+        "network_mode=%s\n"
+        "bridge_if=%s\n"
         "stay_awake=%d\n"
         "lean=%d\n"
         "fps=%d\n"
         "audio=%d\n"
         "rooted=%d\n"
+        "engine=%s\n"
         "created=%s\n"
         "last_port=%d\n",
         c->id, c->name, c->image, c->cores, c->ram_mb, c->data_gb, c->width, c->height,
-        c->dpi, c->landscape ? 1 : 0, c->gpu, c->dns, c->stay_awake ? 1 : 0, c->lean ? 1 : 0, c->fps,
-        c->audio ? 1 : 0, c->rooted ? 1 : 0, c->created,
+        c->dpi, c->landscape ? 1 : 0, c->gpu, c->dns,
+        c->network_mode[0] ? c->network_mode : "nat", c->bridge_if,
+        c->stay_awake ? 1 : 0, c->lean ? 1 : 0, c->fps,
+        c->audio ? 1 : 0, c->rooted ? 1 : 0,
+        c->engine[0] ? c->engine : "legacy", c->created,
         console_port_valid(c->last_port) ? c->last_port : 0);
     if (n < 0 || (size_t)n >= sizeof(body)) return -1;
 
@@ -680,6 +703,10 @@ static void state_kv(const char* key, const char* value, void* ctx) {
         if (strlen(value) < sizeof(sp->st->network_capture_path)) {
             memcpy(sp->st->network_capture_path, value, strlen(value) + 1);
         }
+    } else if (!strcmp(key, "bridge_port")) {
+        if (parse_long(value, 1, 65534, &v)) sp->st->bridge_port = (int)v;
+    } else if (!strcmp(key, "bridge_port2")) {
+        if (parse_long(value, 1, 65534, &v)) sp->st->bridge_port2 = (int)v;
     }
 }
 
@@ -721,8 +748,11 @@ int soulx_state_save(const char* name, const SoulXRunState* st) {
     }
 
     char body[1024 + 256];
-    int n = snprintf(body, sizeof(body), "pid=%d\nport=%d\nheadless=%d\nstarted=%s\nnetwork_capture_path=%s\n",
-                     (int)st->pid, st->port, st->headless ? 1 : 0, st->started, st->network_capture_path);
+    int n = snprintf(body, sizeof(body),
+                     "pid=%d\nport=%d\nheadless=%d\nstarted=%s\nnetwork_capture_path=%s\n"
+                     "bridge_port=%d\nbridge_port2=%d\n",
+                     (int)st->pid, st->port, st->headless ? 1 : 0, st->started, st->network_capture_path,
+                     st->bridge_port, st->bridge_port2);
     if (n < 0 || (size_t)n >= sizeof(body)) return -1;
     if (soulx_write_file_atomic(path, body, (size_t)n) != 0) {
         soulx_log(SOULX_LOG_ERROR, "cannot write %s", path);

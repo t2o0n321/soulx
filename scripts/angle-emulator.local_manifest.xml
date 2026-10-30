@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  SoulX angle-emulator build: projects the darwin_aarch64 build never uses.
+
+  Verified by grepping the generated build graph (objs/**/*.ninja, *.rsp, *.cmake,
+  CMakeCache.txt): each of these is referenced 0 times. Excluding them keeps
+  `repo sync` from fetching them again on a fresh checkout or a re-sync — about
+  47 GB (system-images alone is ~40 GB).
+
+  scripts/build_angle_emulator.sh copies this file into .repo/local_manifests/
+  before syncing, so every environment (local re-sync and CI) skips them.
+
+  Qt (prebuilts/android-emulator-build/qt) and clang (prebuilts/clang) are single
+  git repos whose unused platforms/versions are subdirectories, so a manifest
+  cannot exclude them; the build script's trim_unused() deletes those after sync.
+-->
+<manifest>
+  <remove-project name="platform/prebuilts/android-emulator-build/system-images" />
+  <remove-project name="platform/prebuilts/studio/jdk" />
+  <remove-project name="platform/external/deqp" />
+</manifest>

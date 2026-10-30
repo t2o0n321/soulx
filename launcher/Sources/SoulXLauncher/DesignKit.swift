@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 // The launcher's visual vocabulary: one card surface, one card header, one row shape, one set of buttons.
 // Colours are semantic (primary/secondary/accent at fixed opacities) so light and dark both work.
@@ -586,14 +587,38 @@ struct StatCard: View {
     var unit: String?
     var fraction: Double?
     var help: String?
+    var copy: String?            // if set to a real value, the tile is clickable and copies this to the clipboard
+    @State private var copied = false
+
+    private var canCopy: Bool {
+        guard let copy, !copy.isEmpty else { return false }
+        return copy != "—" && copy != "…"
+    }
 
     var body: some View {
+        if canCopy {
+            Button(action: doCopy) { card }
+                .buttonStyle(.plain)
+                .onHover { inside in
+                    if inside { NSCursor.pointingHand.push() } else { NSCursor.pop() }
+                }
+        } else {
+            card
+        }
+    }
+
+    private var card: some View {
         VStack(alignment: .leading, spacing: 9) {
             HStack(spacing: 6) {
-                Image(systemName: icon).font(.system(size: 11, weight: .semibold))
+                Image(systemName: copied ? "checkmark" : icon)
+                    .font(.system(size: 11, weight: .semibold)).foregroundStyle(copied ? Color.green : .secondary)
                 Text(label).font(.system(size: 11, weight: .semibold))
                 Spacer(minLength: 4)
-                if let note { Text(note).font(.system(size: 11)).monospacedDigit() }
+                if copied {
+                    Text(L("Copied")).font(.system(size: 11, weight: .semibold)).foregroundStyle(.green)
+                } else if let note {
+                    Text(note).font(.system(size: 11)).monospacedDigit()
+                }
             }
             .foregroundStyle(.secondary)
             HStack(alignment: .firstTextBaseline, spacing: 4) {
@@ -606,7 +631,18 @@ struct StatCard: View {
         .padding(.horizontal, 15).padding(.vertical, 13)
         .frame(maxWidth: .infinity, alignment: .leading)
         .surface(18)
-        .help(help ?? "")
+        .help(help ?? (canCopy ? L("Click to copy") : ""))
+    }
+
+    private func doCopy() {
+        guard let copy, canCopy else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(copy, forType: .string)
+        withAnimation(.easeOut(duration: 0.15)) { copied = true }
+        Task {
+            try? await Task.sleep(nanoseconds: 1_200_000_000)
+            withAnimation(.easeOut(duration: 0.2)) { copied = false }
+        }
     }
 }
 

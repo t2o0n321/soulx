@@ -5,6 +5,18 @@ scripts/versioning/ turn it into the release's section, which becomes the text o
 
 ## Unreleased
 
+- **Dual engine — Google Play sign-in**: each instance can run on a new **Angle** engine instead of the standard
+  one. Angle renders the guest through ANGLE (guest OpenGL ES 3.1), which the Google account / Play sign-in
+  WebView needs on macOS, so you can sign in without root and without dropping to software rendering. Choose it
+  in an instance's settings ("Emulator engine") or with `--engine angle` on `soulx create` / `soulx config`; the
+  standard engine stays the default, is unchanged, and an instance can switch between the two. The patched Angle
+  engine is fetched on demand the first time it is used (`soulx setup --engine angle`).
+- **Networking modes**: pick **NAT** (default), **Host-only** or **Bridged** for each instance. Host-only and
+  Bridged route the instance's traffic through a built-in vmnet bridge helper; NAT keeps the previous behaviour
+  and needs no helper.
+- **Shell access**: open an Android shell — or a root shell (`su`, on Magisk-rooted instances) — straight from
+  the launcher.
+
 ## v26.10.4 (2026-10-22)
 
 - **One-click Magisk root**: `soulx root <instance>` patches the boot ramdisk with Magisk v31.0 in a single pass

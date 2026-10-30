@@ -788,14 +788,20 @@ bool soulx_pid_is_engine(pid_t pid) {
     char exe[PROC_PIDPATHINFO_MAXSIZE];
     if (proc_pidpath(pid, exe, sizeof(exe)) <= 0) return false;
 
-    char dir[PATH_MAX];
-    if (soulx_path(dir, sizeof(dir), "sdk/emulator") != 0) return false;
-    char real[PATH_MAX];
-    const char* candidates[2] = { dir, realpath(dir, real) ? real : NULL };  // proc_pidpath is canonical
-    for (int i = 0; i < 2; i++) {
-        if (!candidates[i]) continue;
-        size_t len = strlen(candidates[i]);
-        if (strncmp(exe, candidates[i], len) == 0 && exe[len] == '/') return true;
+    // Both engine backends live under $SOULX_HOME/sdk: the stock emulator (sdk/emulator) and SoulX's
+    // patched "angle" build (sdk/emulator-angle). A process is a SoulX engine if its executable is under
+    // either tree. The exe[len]=='/' guard keeps "sdk/emulator" from also matching "sdk/emulator-angle".
+    const char* rels[] = { "sdk/emulator", "sdk/emulator-angle" };
+    for (size_t r = 0; r < sizeof(rels) / sizeof(rels[0]); r++) {
+        char dir[PATH_MAX];
+        if (soulx_path(dir, sizeof(dir), "%s", rels[r]) != 0) continue;
+        char real[PATH_MAX];
+        const char* candidates[2] = { dir, realpath(dir, real) ? real : NULL };  // proc_pidpath is canonical
+        for (int i = 0; i < 2; i++) {
+            if (!candidates[i]) continue;
+            size_t len = strlen(candidates[i]);
+            if (strncmp(exe, candidates[i], len) == 0 && exe[len] == '/') return true;
+        }
     }
     return false;
 }

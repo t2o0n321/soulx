@@ -1170,11 +1170,20 @@ int soulx_mac_start(const char* name, const SoulXStartOpts* opts, SoulXRunState*
     // cwd under $SOULX_HOME: some console commands (e.g. `screenrecord screenshot` without
     // a directory) write files into the engine's working directory.
     char emulator[PATH_MAX], adb[PATH_MAX], log_path[PATH_MAX], window_log[PATH_MAX], work_dir[PATH_MAX];
-    if (soulx_tool_path("emulator", emulator, sizeof(emulator)) != 0 || soulx_tool_path("adb", adb, sizeof(adb)) != 0 ||
+    // Pick the emulator backend: "angle" uses the patched gfxstream build (GuestAngle + Vulkan -share-vid
+    // readback) installed alongside the stock one; anything else is the legacy Google emulator.
+    const char* emu_tool = !strcmp(c.engine, "angle") ? "emulator-angle" : "emulator";
+    if (soulx_tool_path(emu_tool, emulator, sizeof(emulator)) != 0 || soulx_tool_path("adb", adb, sizeof(adb)) != 0 ||
         log_path_for(c.name, log_path, sizeof(log_path)) != 0 ||
         window_log_path_for(c.name, window_log, sizeof(window_log)) != 0 ||
         soulx_path(work_dir, sizeof(work_dir), "tmp") != 0) {
         soulx_log(SOULX_LOG_ERROR, "SoulX home path too long: %s", soulx_home());
+        return -1;
+    }
+    if (!strcmp(c.engine, "angle") && access(emulator, X_OK) != 0) {
+        soulx_log(SOULX_LOG_ERROR,
+                  "'%s' uses the angle engine but the patched emulator is not installed (%s); "
+                  "run 'soulx setup --engine angle'", c.name, emulator);
         return -1;
     }
 
@@ -1239,14 +1248,22 @@ int soulx_mac_start(const char* name, const SoulXStartOpts* opts, SoulXRunState*
     bool quick_boot = false;
     if (!quick_boot) clear_quickboot_snapshot(c.name, NULL);   // never loaded again; frees its ~4 GB
     const char* const env[] = {
-        !strcmp(gpu, "metal") ? SOULX_ANGLE_PLATFORM_ENV "=metal" : SOULX_ANGLE_PLATFORM_ENV "=vulkan", NULL };
+        !strcmp(gpu, "metal") ? SOULX_ANGLE_PLATFORM_ENV "=metal" : SOULX_ANGLE_PLATFORM_ENV "=vulkan",
+        // The "angle" engine (emu-main-dev 37.3.6) defaults its host Vulkan driver to Mesa's experimental
+        // KosmicKrisp on macOS 26 / Apple Silicon (upstream marks it a temporary default). KosmicKrisp tears
+        // and shows garbage blocks during animation; pin the proven MoltenVK ICD (bundled in lib64/vulkan/)
+        // that the legacy engine uses. SOULX_VK_ICD overrides this for diagnostics.
+        !strcmp(c.engine, "angle")
+            ? (getenv("SOULX_VK_ICD") ? NULL : "ANDROID_EMU_VK_SELECT_ICD=moltenvk")
+            : NULL,
+        NULL };
 
     // The engine never opens a window of its own: SoulX's window shows the frames it shares
     // (-share-vid: shared memory "videmulator<port>") and sends the input.
     char avd[SOULX_NAME_MAX + 8], port_s[16];
     soulx_avd_name(c.name, avd, sizeof(avd));
     snprintf(port_s, sizeof(port_s), "%d", port);
-    const char* argv[40];
+    const char* argv[44];
     int n = 0;
     argv[n++] = emulator;
     argv[n++] = "-avd";
@@ -1259,8 +1276,16 @@ int soulx_mac_start(const char* name, const SoulXStartOpts* opts, SoulXRunState*
     argv[n++] = "-no-boot-anim";
     argv[n++] = "-adb-path";
     argv[n++] = adb;
-    argv[n++] = "-no-window";
-    argv[n++] = "-share-vid";
+    // SOULX_ENGINE_OWN_WINDOW=1 (diagnostic): let the engine open its own window (DisplayVk) instead of running
+    // headless and feeding SoulX's Metal window. Isolates whether a -share-vid readback artefact is already
+    // present in the engine's own Vulkan compositing (if the engine's own window shows it too, it is upstream).
+    const bool own_window = getenv("SOULX_ENGINE_OWN_WINDOW") != NULL;
+    if (!own_window) argv[n++] = "-no-window";
+    // -share-vid feeds SoulX's Metal window through the GL/EGL readback worker; GuestAngle disables host GL/EGL, so
+    // a diagnostic can drop it (SOULX_NO_SHARE_VID=1) to try the ANGLE guest renderer headless.
+    if (!own_window && !getenv("SOULX_NO_SHARE_VID")) {
+        argv[n++] = "-share-vid";
+    }
     char ramdisk_path[PATH_MAX];
     if (c.rooted &&
         soulx_path(ramdisk_path, sizeof(ramdisk_path), "avd/%s.avd/magisk-ramdisk.img", avd) == 0 &&
@@ -1288,6 +1313,22 @@ int soulx_mac_start(const char* name, const SoulXStartOpts* opts, SoulXRunState*
     // way. Listed before the diagnostic features below so that SOULX_ENGINE_FEATURES can still switch it back.
     argv[n++] = "-feature";
     argv[n++] = "-WiFiPacketStream";
+    // SoulX "angle" engine: make the guest render GLES through ANGLE->Vulkan (GLES 3.1), which the Google
+    // sign-in Chromium WebView needs on macOS (Apple's host GLES caps at 3.0). Paired with the patched
+    // gfxstream so -share-vid can read the Vulkan frames back into SoulX's Metal window. Listed before the
+    // diagnostic features below so SOULX_ENGINE_FEATURES can still switch it back.
+    if (!strcmp(c.engine, "angle")) {
+        argv[n++] = "-feature";
+        argv[n++] = "GuestAngle";
+        // emu-main-dev defaults the guest UI renderer to skiavk only on XR AVDs; a phone AVD falls back to
+        // skiagl, which routes every app's HWUI through Skia GL -> ANGLE -> gfxstream and mis-renders some
+        // RenderNodes (text/search bars drawn mirrored + squashed; legacy 37.2.12 + GuestAngle used skiavk and
+        // was fine). Pin skiavk so HWUI composites straight on Vulkan, bypassing ANGLE; web content keeps
+        // ANGLE's GLES 3.1 (ro.hardware.egl=angle is unchanged), so Play sign-in is unaffected. skiavk needs
+        // VulkanVirtualQueue, which the host enables by default — do not switch it off in SOULX_ENGINE_FEATURES.
+        argv[n++] = "-systemui-renderer";
+        argv[n++] = "skiavk";
+    }
     // Diagnostics: SOULX_ENGINE_FEATURES="-GLAsyncSwap,Foo" adds engine feature switches for this start.
     char features[256] = "";
     const char* fe = getenv("SOULX_ENGINE_FEATURES");
@@ -1298,6 +1339,57 @@ int soulx_mac_start(const char* name, const SoulXStartOpts* opts, SoulXRunState*
             argv[n++] = tok;
         }
     }
+    // Host-only / Bridged networking: route this instance through the soulx_netd vmnet bridge(s). NAT (the
+    // default) keeps the emulator's own user-mode networking and needs no helper. -wifi-socket keeps the wlan0
+    // netdev named "virtio-wifi", so network capture still attaches. For Host-only we also route the radio
+    // (eth0) through a second bridge with -net-socket, otherwise the guest reaches the internet through it and
+    // the mode is not truly isolated. All of these must come before -qemu (they are emulator options).
+    int bridge_port = 0, bridge_port2 = 0;
+    char wifisock[64] = "", netsock[64] = "";
+    if (c.network_mode[0] && strcmp(c.network_mode, "nat") != 0 && n < 32) {
+        const char* mode = strcmp(c.network_mode, "bridged") == 0 ? "bridged" : "host";
+        if (!soulx_netd_installed()) {
+            soulx_log(SOULX_LOG_INFO, "setting up the network helper for %s networking (one-time)...", mode);
+            if (soulx_netd_install() != 0) {
+                soulx_log(SOULX_LOG_ERROR, "'%s' needs the network helper for %s networking", c.name, mode);
+                soulx_lock_release(lock);
+                return -1;
+            }
+        }
+        if (soulx_netd_start_bridge(mode, c.bridge_if, &bridge_port) != 0) {
+            soulx_log(SOULX_LOG_ERROR, "could not open the %s network bridge for '%s'", mode, c.name);
+            soulx_lock_release(lock);
+            return -1;
+        }
+        snprintf(wifisock, sizeof wifisock, "connect=127.0.0.1:%d", bridge_port);
+        argv[n++] = "-wifi-socket";
+        argv[n++] = wifisock;
+        if (strcmp(mode, "host") == 0) {                 // isolate the radio too, so there is no internet leak
+            if (soulx_netd_start_bridge("host", c.bridge_if, &bridge_port2) != 0) {
+                soulx_log(SOULX_LOG_ERROR, "could not open the host-only radio bridge for '%s'", c.name);
+                soulx_netd_stop_bridge(bridge_port);
+                soulx_lock_release(lock);
+                return -1;
+            }
+            snprintf(netsock, sizeof netsock, "connect=127.0.0.1:%d", bridge_port2);
+            argv[n++] = "-net-socket";
+            argv[n++] = netsock;
+        }
+        soulx_log(SOULX_LOG_INFO, "'%s' using %s networking via soulx_netd (loopback :%d%s)", c.name, mode,
+                  bridge_port, bridge_port2 ? " + radio" : "");
+    }
+
+    // Network mode hook (diagnostic): SOULX_NET_ARGS="-vmnet-shared" or "-wifi-user-mode-options restrict=on"
+    // (space-separated) adds emulator-level network args for this start. Must come before -qemu.
+    char netargs[256] = "";
+    const char* na = getenv("SOULX_NET_ARGS");
+    if (na && na[0] && strlen(na) < sizeof(netargs)) {
+        memcpy(netargs, na, strlen(na) + 1);
+        for (char* tok = strtok(netargs, " "); tok && n < 34; tok = strtok(NULL, " ")) {
+            argv[n++] = tok;
+        }
+    }
+
     // QMP socket for network_capture.c. Last, because everything after -qemu goes to QEMU itself.
     char qmp[PATH_MAX + 32];
     if (soulx_mac_network_capture_qmp_arg(c.name, qmp, sizeof(qmp)) == 0) {
@@ -1321,6 +1413,8 @@ int soulx_mac_start(const char* name, const SoulXStartOpts* opts, SoulXRunState*
     cmd.env = env;
     pid_t launcher = soulx_spawn_detached(&cmd, log_path, true);
     if (launcher <= 0) {
+        if (bridge_port) soulx_netd_stop_bridge(bridge_port);
+        if (bridge_port2) soulx_netd_stop_bridge(bridge_port2);
         soulx_lock_release(lock);
         soulx_log(SOULX_LOG_ERROR, "could not launch %s", emulator);
         soulx_mac_cleanup_idle();                         // the adb server started above would outlive us
@@ -1333,14 +1427,20 @@ int soulx_mac_start(const char* name, const SoulXStartOpts* opts, SoulXRunState*
     st.pid = exited ? launcher : pid;
     st.port = port;
     st.headless = o.headless;
+    st.bridge_port = bridge_port;                        // so stop can tear the vmnet bridge(s) down
+    st.bridge_port2 = bridge_port2;
     iso_now(st.started, sizeof(st.started));
     if (soulx_state_save(c.name, &st) != 0) {
         if (!exited) signal_engine(st.pid, SIGKILL);     // never leave an untracked engine behind
+        if (bridge_port) soulx_netd_stop_bridge(bridge_port);
+        if (bridge_port2) soulx_netd_stop_bridge(bridge_port2);
         soulx_lock_release(lock);
         soulx_mac_cleanup_idle();
         return -1;
     }
     if (exited && !soulx_instance_running(c.name, &st)) {
+        if (bridge_port) soulx_netd_stop_bridge(bridge_port);
+        if (bridge_port2) soulx_netd_stop_bridge(bridge_port2);
         soulx_lock_release(lock);
         soulx_log(SOULX_LOG_ERROR, "the emulator exited right after launch");
         print_log_tail(log_path, LOG_TAIL_LINES);
@@ -1494,6 +1594,10 @@ int soulx_mac_stop(const char* name, bool force) {
     clear_state_if_pid(c.name, st.pid);
     track_remove(g_booted, c.name);
     track_remove(g_paused, c.name);
+    // Tear down the vmnet bridge, if this instance used Host-only / Bridged networking. (The worker also
+    // exits on its own when the emulator's socket closes; this frees the daemon's slot promptly.)
+    if (st.bridge_port) soulx_netd_stop_bridge(st.bridge_port);
+    if (st.bridge_port2) soulx_netd_stop_bridge(st.bridge_port2);
 
     // What happened to the snapshot, from the engine's own log line ("Saving snapshot '...' took N ms").
     char log_path[PATH_MAX];
@@ -1605,6 +1709,23 @@ int soulx_mac_post_boot(const char* name, const SoulXRunState* st) {
         free(out);
         if (rc != 0)
             soulx_log(SOULX_LOG_WARN, "Magisk environment setup failed for '%s' (su works but some features may not)", c.name);
+    }
+
+    // Host-only / Bridged: the chosen mode lives on wlan0. Bring the emulator's static eth0 (its built-in
+    // 10.0.2.x user-mode NAT interface) down so the guest's interfaces reflect the mode and nothing else.
+    // Needs root; without it eth0's connectivity is still handled at the emulator level (-net-socket for
+    // Host-only), only its static address keeps showing.
+    if (c.rooted && c.network_mode[0] && strcmp(c.network_mode, "nat") != 0) {
+        // Android brings eth0 up a little after boot_completed, so a single down here is too early. Keep
+        // taking it down for a few seconds to catch it whenever it appears; once down, it stays down.
+        out = NULL;
+        rc = soulx_adb_shell(serial,
+            "/debug_ramdisk/magisk su -c 'n=0; while [ $n -lt 15 ]; do "
+            "ip link set eth0 down 2>/dev/null; ip addr flush dev eth0 2>/dev/null; "
+            "n=$((n+1)); sleep 0.4; done'",
+            &out, POST_BOOT_TIMEOUT_MS);
+        free(out);
+        (void)rc;
     }
 
     return 0;

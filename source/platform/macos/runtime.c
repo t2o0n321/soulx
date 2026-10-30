@@ -46,7 +46,7 @@ int soulx_runtime_write_marker(const SoulXPackage* p);
 #define UNZIP_BIN           "/usr/bin/unzip"
 #define XATTR_BIN           "/usr/bin/xattr"
 #define CODESIGN_BIN        "/usr/bin/codesign"
-#define QEMU_REL            "sdk/emulator/qemu/darwin-aarch64/qemu-system-aarch64"
+#define QEMU_IN_ENGINE      "qemu/darwin-aarch64/qemu-system-aarch64"     // relative to an engine's install dir
 #define TERMS_URL           "https://developer.android.com/studio/terms"
 
 #define GB                  1000000000ULL
@@ -156,6 +156,37 @@ static const SoulXPackage k_packages[] = {
 
 #define PACKAGE_COUNT (sizeof(k_packages) / sizeof(k_packages[0]))
 
+// The "angle" engine (instances with engine=angle): SoulX's own build of the Android Emulator with a
+// patched gfxstream (Vulkan -share-vid readback) for -feature GuestAngle. It is optional and downloaded on
+// demand (`soulx setup --engine angle`), so it stays out of k_packages, the base runtime every install gets:
+// the package listings, the launcher's first-run page and its download totals never include it. Published as
+// a GitHub Release asset, re-signed ad hoc with the engine's entitlements (com.apple.security.hypervisor, ...)
+// when packaged; setup clears the quarantine flag like it does for Google's engine. No license prompt: it is
+// built from the open-source emulator, not Google's SDK binaries.
+// Pinned to the zip published at the url below (built by scripts/build_angle_emulator.sh / the
+// engine-angle CI workflow). A rebuild changes the SHA-1 (ad-hoc signature + build timestamps), so after
+// re-building update .size/.sha1 here and the unpacked size in unpacked_size() from the build's
+// build/angle-emulator/emulator-angle.manifest. A size of 0 marks it not-downloadable (package_published),
+// so setup reports "not available yet" instead of fetching a release that does not exist.
+static const SoulXPackage k_angle_package = {
+    .key = "emulator-angle",
+    .kind = SOULX_PKG_ENGINE,
+    .sdk_id = "emulator",
+    .version = "37.3.6-soulx1",
+    .url = "https://github.com/t2o0n321/soulx/releases/download/engine-angle-37.3.6-soulx1/"
+           "emulator-angle-37.3.6-soulx1-darwin_aarch64.zip",
+    .size = 417385616ULL,
+    .sha1 = "f9a3fe1ca845231d6f13316e42684e5d7c42db04",
+    .license_id = NULL,
+    .zip_root = "emulator",
+    .install_rel = "emulator-angle",
+    .description = "Android Emulator engine 37.3.6 with SoulX's gfxstream patch (angle engine, Apple Silicon)",
+};
+
+static bool package_published(const SoulXPackage* p) {
+    return p && p->size > 0 && p->sha1 && p->sha1[0];
+}
+
 // Bytes on disk after extraction: the sum of each pinned zip's uncompressed entries, read from the
 // zips' central directories (system images differ a lot: google 1.6x and play16k 4.1x their zip).
 static uint64_t unpacked_size(const SoulXPackage* p) {
@@ -168,6 +199,7 @@ static uint64_t unpacked_size(const SoulXPackage* p) {
         { "play", 2887305349ULL },
         { "google", 4632457058ULL },
         { "play16k", 8762254637ULL },
+        { "emulator-angle", 1325281280ULL },     // measured: objs/distribution/emulator (emu 37.3.6-soulx1)
     };
     for (size_t i = 0; i < sizeof(k_unpacked) / sizeof(k_unpacked[0]); i++) {
         if (strcmp(p->key, k_unpacked[i].key) == 0) return k_unpacked[i].bytes;
@@ -355,6 +387,7 @@ const SoulXPackage* soulx_runtime_find(const char* key) {
     for (size_t i = 0; i < PACKAGE_COUNT; i++) {
         if (strcmp(k_packages[i].key, key) == 0) return &k_packages[i];
     }
+    if (strcmp(k_angle_package.key, key) == 0) return &k_angle_package;
     return NULL;
 }
 
@@ -362,11 +395,21 @@ const SoulXPackage* soulx_runtime_default_image(void) {
     return soulx_runtime_find("play");
 }
 
+const SoulXPackage* soulx_runtime_engine(const char* engine) {
+    return streq(engine, "angle") ? &k_angle_package : find_kind(SOULX_PKG_ENGINE);
+}
+
+bool soulx_runtime_available(const SoulXPackage* p) {
+    return package_published(p);
+}
+
 int soulx_tool_path(const char* tool, char* buf, size_t cap) {
     if (!buf || cap == 0) return -1;
     buf[0] = '\0';
     if (streq(tool, "adb")) return soulx_path(buf, cap, "sdk/platform-tools/adb");
     if (streq(tool, "emulator")) return soulx_path(buf, cap, "sdk/emulator/emulator");
+    // "angle" engine: the patched gfxstream build installed alongside the stock one.
+    if (streq(tool, "emulator-angle")) return soulx_path(buf, cap, "sdk/emulator-angle/emulator");
     return -1;
 }
 
@@ -558,9 +601,11 @@ bool soulx_runtime_installed(const SoulXPackage* p) {
     switch (p->kind) {
     case SOULX_PKG_ENGINE:
         // the launcher and the qemu binaries it execs (-no-window uses the headless one)
-        return soulx_tool_path("emulator", exe, sizeof(exe)) == 0 && is_executable_file(exe) &&
-               soulx_path(exe, sizeof(exe), "%s", QEMU_REL) == 0 && is_executable_file(exe) &&
-               soulx_path(exe, sizeof(exe), "%s-headless", QEMU_REL) == 0 && is_executable_file(exe);
+        return soulx_path(exe, sizeof(exe), "sdk/%s/emulator", p->install_rel) == 0 && is_executable_file(exe) &&
+               soulx_path(exe, sizeof(exe), "sdk/%s/%s", p->install_rel, QEMU_IN_ENGINE) == 0 &&
+               is_executable_file(exe) &&
+               soulx_path(exe, sizeof(exe), "sdk/%s/%s-headless", p->install_rel, QEMU_IN_ENGINE) == 0 &&
+               is_executable_file(exe);
     case SOULX_PKG_PLATFORM_TOOLS:
         return soulx_tool_path("adb", exe, sizeof(exe)) == 0 && is_executable_file(exe);
     case SOULX_PKG_IMAGE:
@@ -1190,6 +1235,11 @@ static int run_curl_download(const char* part, const char* url, const char* key,
     return rc;
 }
 
+// The command that installs p: the angle engine is only part of setup once asked for.
+static const char* setup_command(const SoulXPackage* p) {
+    return p == &k_angle_package ? "soulx setup --engine angle" : "soulx setup";
+}
+
 static int download_package(const SoulXPackage* p, char* zip_out, size_t cap) {
     char name[NAME_MAX + 1];
     char dest[PATH_MAX];
@@ -1217,12 +1267,12 @@ static int download_package(const SoulXPackage* p, char* zip_out, size_t cap) {
             rc = run_curl_download(part, p->url, p->key, p->size);
         }
         if (g_soulx_interrupted) {
-            soulx_log(SOULX_LOG_ERROR, "download interrupted; run `soulx setup` again to resume");
+            soulx_log(SOULX_LOG_ERROR, "download interrupted; run `%s` again to resume", setup_command(p));
             return -1;
         }
         if (rc != 0) {
-            soulx_log(SOULX_LOG_ERROR, "download of %s failed (curl exit status %d); run `soulx setup` again to resume",
-                     p->key, rc);
+            soulx_log(SOULX_LOG_ERROR, "download of %s failed (curl exit status %d); run `%s` again to resume",
+                     p->key, rc, setup_command(p));
             return -1;
         }
     }
@@ -1235,7 +1285,7 @@ static int download_package(const SoulXPackage* p, char* zip_out, size_t cap) {
     }
     char hex[2 * CC_SHA1_DIGEST_LENGTH + 1];
     if (sha1_hex_file(part, p->key, hex) != 0) {
-        if (g_soulx_interrupted) soulx_log(SOULX_LOG_ERROR, "verification interrupted; run `soulx setup` again");
+        if (g_soulx_interrupted) soulx_log(SOULX_LOG_ERROR, "verification interrupted; run `%s` again", setup_command(p));
         else soulx_log(SOULX_LOG_ERROR, "cannot read %s: %s", part, strerror(errno));
         return -1;
     }
@@ -1397,10 +1447,12 @@ static int extract_package(const SoulXPackage* p, const char* zip) {
     (void)soulx_rmtree(stage);
     if (committed != 0) return -1;
 
-    // Binaries are used exactly as Google signed them; only a quarantine flag is cleared.
+    // Binaries are used exactly as signed (by Google; the angle engine by SoulX when packaged); only a
+    // quarantine flag is cleared.
     char exe[PATH_MAX];
     bool quarantined = has_quarantine(dst);
-    if (!quarantined && p->kind == SOULX_PKG_ENGINE && soulx_tool_path("emulator", exe, sizeof(exe)) == 0) {
+    n = snprintf(exe, sizeof(exe), "%s/emulator", dst);
+    if (!quarantined && p->kind == SOULX_PKG_ENGINE && n > 0 && (size_t)n < sizeof(exe)) {
         quarantined = has_quarantine(exe);
     }
     if (quarantined) {
@@ -1463,18 +1515,21 @@ static int check_disk(const SoulXPackage* const* todo, size_t n, bool keep_downl
     return 0;
 }
 
-// Name of a running instance whose engine or system image would be replaced (NULL = none).
+// Name of a running instance whose engine or system image would be replaced (NULL = none). The stock
+// engine counts for every instance; the angle engine only for the instances that use it.
 static bool running_instance_blocks(const SoulXPackage* const* todo, size_t n, char* who, size_t cap) {
     bool engine = false;
+    bool angle = false;
     for (size_t i = 0; i < n; i++) {
-        if (todo[i]->kind == SOULX_PKG_ENGINE) engine = true;
+        if (todo[i] == &k_angle_package) angle = true;
+        else if (todo[i]->kind == SOULX_PKG_ENGINE) engine = true;
     }
     SoulXInstanceConf* list = calloc(MAX_REG_LIST, sizeof(*list));
     if (!list) return false;
     int count = soulx_reg_list(list, MAX_REG_LIST);
     bool blocked = false;
     for (int i = 0; i < count && !blocked; i++) {
-        bool affected = engine;
+        bool affected = engine || (angle && streq(list[i].engine, "angle"));
         for (size_t k = 0; k < n && !affected; k++) {
             if (todo[k]->kind == SOULX_PKG_IMAGE && strcmp(todo[k]->key, list[i].image) == 0) affected = true;
         }
@@ -1487,8 +1542,63 @@ static bool running_instance_blocks(const SoulXPackage* const* todo, size_t n, c
     return blocked;
 }
 
+static bool instances_use_engine(const char* engine) {
+    SoulXInstanceConf* list = calloc(MAX_REG_LIST, sizeof(*list));
+    if (!list) return false;
+    int count = soulx_reg_list(list, MAX_REG_LIST);
+    bool used = false;
+    for (int i = 0; i < count && !used; i++) used = streq(list[i].engine, engine);
+    free(list);
+    return used;
+}
+
+// The angle engine belongs to this install once it was asked for: its install marker or directory exists,
+// or an instance uses it. Setup then keeps it complete like the base runtime (and --force, the launcher's
+// "Repair", reinstalls it too); an install that never asked for it never downloads it.
+static bool angle_in_use(void) {
+    char path[PATH_MAX];
+    if (marker_path(&k_angle_package, path, sizeof(path)) == 0 && soulx_path_exists(path)) return true;
+    if (install_dir(&k_angle_package, path, sizeof(path)) == 0 && soulx_path_exists(path)) return true;
+    return instances_use_engine("angle");
+}
+
+// Installs todo[] one after the other (a verified zip from downloads/ or a fresh download, unpacked and moved
+// into place), after checking that no running instance uses those files, the free disk space and the licenses.
+// 0 when every package is installed.
+static int install_packages(const SoulXPackage* const* todo, size_t ntodo, const SoulXSetupOpts* opts) {
+    char who[SOULX_NAME_MAX + 1];
+    if (running_instance_blocks(todo, ntodo, who, sizeof(who))) {
+        soulx_log(SOULX_LOG_ERROR, "instance '%s' is running on the files to be replaced; stop it first: soulx stop %s", who, who);
+        return -1;
+    }
+    if (check_disk(todo, ntodo, opts->keep_downloads) != 0 || ensure_licenses(todo, ntodo, opts) != 0) return -1;
+    for (size_t i = 0; i < ntodo; i++) {
+        const SoulXPackage* p = todo[i];
+        if (g_soulx_interrupted) return -1;
+        soulx_log(SOULX_LOG_INFO, "[%zu/%zu] %s", i + 1, ntodo, p->description);
+        char zip[PATH_MAX];
+        int found = find_verified_zip(p, zip, sizeof(zip));
+        if (found == -2) {
+            soulx_log(SOULX_LOG_ERROR, "verification interrupted");
+            return -1;
+        }
+        if (found != 0 && download_package(p, zip, sizeof(zip)) != 0) return -1;
+        if (extract_package(p, zip) != 0) return -1;
+        if (!soulx_runtime_installed(p)) {
+            soulx_log(SOULX_LOG_ERROR, "%s did not install correctly (missing files); run `%s --force`", p->key,
+                     setup_command(p));
+            return -1;
+        }
+        if (!opts->keep_downloads && unlink(zip) != 0) {
+            soulx_log(SOULX_LOG_WARN, "cannot delete %s: %s", zip, strerror(errno));
+        }
+        soulx_log(SOULX_LOG_INFO, "Installed %s %s", p->key, p->version);
+    }
+    return 0;
+}
+
 int soulx_runtime_setup(const char* image_key, const SoulXSetupOpts* opts) {
-    SoulXSetupOpts defaults = { false, false, false };
+    SoulXSetupOpts defaults = { .accept_licenses = false };
     if (!opts) opts = &defaults;
 
     const SoulXPackage* image = (image_key && image_key[0]) ? soulx_runtime_find(image_key) : soulx_runtime_default_image();
@@ -1496,6 +1606,16 @@ int soulx_runtime_setup(const char* image_key, const SoulXSetupOpts* opts) {
         char keys[64];
         image_keys(keys, sizeof(keys));
         soulx_log(SOULX_LOG_ERROR, "unknown system image '%s' (available: %s)", image_key ? image_key : "", keys);
+        return -1;
+    }
+    const char* engine = opts->engine && opts->engine[0] ? opts->engine : "legacy";
+    if (!streq(engine, "legacy") && !streq(engine, "angle")) {
+        soulx_log(SOULX_LOG_ERROR, "unknown engine '%s' (available: legacy, angle)", engine);
+        return -1;
+    }
+    bool ask_angle = streq(engine, "angle");
+    if (ask_angle && !package_published(&k_angle_package)) {
+        soulx_log(SOULX_LOG_ERROR, "the angle engine (%s) is not available for download yet", k_angle_package.version);
         return -1;
     }
     if (!host_is_arm64()) {
@@ -1513,54 +1633,46 @@ int soulx_runtime_setup(const char* image_key, const SoulXSetupOpts* opts) {
     for (size_t i = 0; i < 3; i++) {
         if (opts->force || !soulx_runtime_installed(wanted[i])) todo[ntodo++] = wanted[i];
     }
+    bool with_angle = ask_angle || angle_in_use();
+    if (with_angle && !package_published(&k_angle_package)) {   // in use, not published (installed by hand): left alone
+        soulx_log(SOULX_LOG_DEBUG, "the angle engine is not available for download yet; not checked by setup");
+        with_angle = false;
+    }
+    bool angle_todo = with_angle && (opts->force || !soulx_runtime_installed(&k_angle_package));
 
     int rc = 0;
     if (ntodo > 0) {
-        char who[SOULX_NAME_MAX + 1];
-        if (running_instance_blocks(todo, ntodo, who, sizeof(who))) {
-            soulx_log(SOULX_LOG_ERROR, "instance '%s' is running on the files to be replaced; stop it first: soulx stop %s", who, who);
+        if (install_packages(todo, ntodo, opts) != 0) {
             rc = -1;
             goto done;
         }
-        if (check_disk(todo, ntodo, opts->keep_downloads) != 0 || ensure_licenses(todo, ntodo, opts) != 0) {
-            rc = -1;
-            goto done;
-        }
-        for (size_t i = 0; i < ntodo && rc == 0; i++) {
-            const SoulXPackage* p = todo[i];
-            if (g_soulx_interrupted) {
-                rc = -1;
-                break;
-            }
-            soulx_log(SOULX_LOG_INFO, "[%zu/%zu] %s", i + 1, ntodo, p->description);
-            char zip[PATH_MAX];
-            int found = find_verified_zip(p, zip, sizeof(zip));
-            if (found == -2) {
-                soulx_log(SOULX_LOG_ERROR, "verification interrupted");
-                rc = -1;
-                break;
-            }
-            if (found != 0 && download_package(p, zip, sizeof(zip)) != 0) {
-                rc = -1;
-                break;
-            }
-            if (extract_package(p, zip) != 0) {
-                rc = -1;
-                break;
-            }
-            if (!soulx_runtime_installed(p)) {
-                soulx_log(SOULX_LOG_ERROR, "%s did not install correctly (missing files); run `soulx setup --force`", p->key);
-                rc = -1;
-                break;
-            }
-            if (!opts->keep_downloads && unlink(zip) != 0) {
-                soulx_log(SOULX_LOG_WARN, "cannot delete %s: %s", zip, strerror(errno));
-            }
-            soulx_log(SOULX_LOG_INFO, "Installed %s %s", p->key, p->version);
-        }
-        if (rc != 0) goto done;
-    } else {
+    } else if (!angle_todo) {
         soulx_log(SOULX_LOG_INFO, "Runtime already installed (use --force to reinstall)");
+    }
+
+    // The angle engine, in a step of its own after the base runtime. Asked for (--engine angle), it is part of the
+    // result. Only kept up to date because this install uses it, it never fails the setup of the stock engine:
+    // offline, a release that moved or an instance running on it is reported and the step is skipped (instances
+    // on the angle engine keep the copy they have).
+    if (angle_todo) {
+        const SoulXPackage* const one[1] = { &k_angle_package };
+        char who[SOULX_NAME_MAX + 1];
+        int arc;
+        if (!ask_angle && running_instance_blocks(one, 1, who, sizeof(who))) {
+            soulx_log(SOULX_LOG_WARN, "the angle engine was not updated: instance '%s' is running on it", who);
+            arc = -1;
+        } else {
+            arc = install_packages(one, 1, opts);
+        }
+        if (arc != 0 && (ask_angle || g_soulx_interrupted)) {
+            rc = -1;
+            goto done;
+        }
+        if (arc != 0) {
+            soulx_log(SOULX_LOG_WARN, "the angle engine could not be updated; the stock engine is ready and instances "
+                     "on the angle engine keep the copy they have (retry: soulx setup --engine angle)");
+            with_angle = soulx_runtime_installed(&k_angle_package);
+        }
     }
 
     char platforms[PATH_MAX];
@@ -1570,8 +1682,10 @@ int soulx_runtime_setup(const char* image_key, const SoulXSetupOpts* opts) {
     {
         char label[160];
         image_label(image, label, sizeof(label));
-        printf("Runtime ready: %s · engine %s · adb %s\n", label,
-               find_kind(SOULX_PKG_ENGINE)->version, find_kind(SOULX_PKG_PLATFORM_TOOLS)->version);
+        char angle[64] = "";
+        if (with_angle) snprintf(angle, sizeof(angle), " · angle engine %s", k_angle_package.version);
+        printf("Runtime ready: %s · engine %s%s · adb %s\n", label,
+               find_kind(SOULX_PKG_ENGINE)->version, angle, find_kind(SOULX_PKG_PLATFORM_TOOLS)->version);
         fflush(stdout);
     }
 
@@ -1620,16 +1734,25 @@ int soulx_ensure_adb_key(void) {
 // Status
 // ---------------------------------------------------------------------------
 
+static void status_row(const SoulXPackage* p, int version_width, const char* desc) {
+    char dir[PATH_MAX];
+    char size_s[32] = "-";
+    if (install_dir(p, dir, sizeof(dir)) == 0 && soulx_is_dir(dir)) format_bytes(soulx_dir_size(dir), size_s, sizeof(size_s));
+    printf("  %-15s %-*s %-14s %10s  %s\n", p->key, version_width, p->version, state_name(package_state(p)), size_s,
+           desc);
+}
+
 int soulx_runtime_print_status(void) {
     const SoulXPackage* def = soulx_runtime_default_image();
+    // The optional angle engine is listed only where it is in use; an install that never used it sees the table
+    // exactly as before.
+    bool show_angle = angle_in_use();
+    int vw = 9;
+    if (show_angle && (int)strlen(k_angle_package.version) > vw) vw = (int)strlen(k_angle_package.version);
     printf("SoulX runtime: %s\n", soulx_home());
-    printf("  %-15s %-9s %-14s %10s  %s\n", "PACKAGE", "VERSION", "STATUS", "SIZE", "DESCRIPTION");
+    printf("  %-15s %-*s %-14s %10s  %s\n", "PACKAGE", vw, "VERSION", "STATUS", "SIZE", "DESCRIPTION");
     for (size_t i = 0; i < PACKAGE_COUNT; i++) {
         const SoulXPackage* p = &k_packages[i];
-        PkgState s = package_state(p);
-        char dir[PATH_MAX];
-        char size_s[32] = "-";
-        if (install_dir(p, dir, sizeof(dir)) == 0 && soulx_is_dir(dir)) format_bytes(soulx_dir_size(dir), size_s, sizeof(size_s));
         char desc[200];
         if (p->kind == SOULX_PKG_IMAGE) {
             char label[160];
@@ -1638,7 +1761,13 @@ int soulx_runtime_print_status(void) {
         } else {
             snprintf(desc, sizeof(desc), "%s", p->description);
         }
-        printf("  %-15s %-9s %-14s %10s  %s\n", p->key, p->version, state_name(s), size_s, desc);
+        status_row(p, vw, desc);
+    }
+    if (show_angle) {
+        char desc[200];
+        snprintf(desc, sizeof(desc), "%s [optional: %s]", k_angle_package.description,
+                 package_published(&k_angle_package) ? "soulx setup --engine angle" : "not available for download yet");
+        status_row(&k_angle_package, vw, desc);
     }
     char dl[PATH_MAX];
     if (soulx_path(dl, sizeof(dl), "downloads") == 0) {
@@ -1768,6 +1897,15 @@ static void check_adb_server(DoctorTally* t) {
     }
 }
 
+// codesign -v of an engine's qemu (the binary that needs the hypervisor entitlement).
+static bool engine_signature_valid(const SoulXPackage* p) {
+    char qemu[PATH_MAX];
+    if (soulx_path(qemu, sizeof(qemu), "sdk/%s/%s", p->install_rel, QEMU_IN_ENGINE) != 0) return false;
+    const char* argv[] = { CODESIGN_BIN, "-v", qemu, NULL };
+    SoulXCmd cmd = { .argv = argv, .timeout_ms = 60000 };
+    return soulx_run(&cmd, NULL) == 0;
+}
+
 int soulx_doctor(void) {
     DoctorTally t = { 0, 0 };
     printf("SoulX doctor (SOULX_HOME=%s)\n", soulx_home());
@@ -1842,12 +1980,24 @@ int soulx_doctor(void) {
     }
 
     if (eng_ok) {
-        char qemu[PATH_MAX];
-        if (soulx_path(qemu, sizeof(qemu), "%s", QEMU_REL) == 0) {
-            const char* argv[] = { CODESIGN_BIN, "-v", qemu, NULL };
-            SoulXCmd cmd = { .argv = argv, .timeout_ms = 60000 };
-            if (soulx_run(&cmd, NULL) == 0) check_line(&t, 'o', "Engine code signature valid");
-            else check_line(&t, 'x', "Engine code signature invalid or engine binary missing — run: soulx setup --force");
+        if (engine_signature_valid(eng)) check_line(&t, 'o', "Engine code signature valid");
+        else check_line(&t, 'x', "Engine code signature invalid or engine binary missing — run: soulx setup --force");
+    }
+
+    // The angle engine: only checked where it was asked for (installed, or used by an instance). Instances on the
+    // stock engine run without it, so its problems are warnings.
+    if (angle_in_use()) {
+        const SoulXPackage* ang = &k_angle_package;
+        PkgState s = package_state(ang);
+        char exe[PATH_MAX];
+        bool present = soulx_tool_path("emulator-angle", exe, sizeof(exe)) == 0 && is_executable_file(exe);
+        const char* fix = package_published(ang) ? " — run: soulx setup --engine angle" : "";
+        if (s == PKG_OK) check_line(&t, 'o', "Angle engine %s installed", ang->version);
+        else if (present && s == PKG_MISSING) check_line(&t, 'o', "Angle engine present in %s (installed by hand)", exe);
+        else check_line(&t, '!', "Angle engine %s is %s%s", ang->version, state_name(s), fix);
+        if (present) {
+            if (engine_signature_valid(ang)) check_line(&t, 'o', "Angle engine code signature valid");
+            else check_line(&t, '!', "Angle engine code signature invalid or binary missing%s", fix);
         }
     }
 
@@ -1892,6 +2042,12 @@ int soulx_doctor(void) {
                            list[i].id, list[i].name, img->key);
             } else {
                 check_line(&t, 'o', "Instance #%d %s: stopped", list[i].id, list[i].name);
+            }
+            char exe[PATH_MAX];
+            if (streq(list[i].engine, "angle") &&
+                !(soulx_tool_path("emulator-angle", exe, sizeof(exe)) == 0 && is_executable_file(exe))) {
+                check_line(&t, '!', "  engine: angle, which is not installed%s",
+                           package_published(&k_angle_package) ? " — run: soulx setup --engine angle" : "");
             }
             if (list[i].rooted) {
                 char rd[PATH_MAX];

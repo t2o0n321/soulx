@@ -45,6 +45,24 @@ public enum Profile: String, CaseIterable, Identifiable, Sendable {
     }
 }
 
+/// How an instance reaches the network (keep in sync with registry.c / engine.c).
+public enum NetworkMode: String, CaseIterable, Identifiable, Sendable {
+    case nat                          // the emulator's own user-mode NAT (default); private, has internet
+    case host                         // vmnet host-only: reaches the Mac (and host-only peers), no internet
+    case bridged                      // vmnet bridged: a real device on the Mac's LAN (its own LAN IP)
+    public var id: String { rawValue }
+    /// host / bridged route through the soulx_netd helper, which needs a one-time admin install.
+    public var needsHelper: Bool { self != .nat }
+}
+
+/// Which emulator backend runs the instance (keep in sync with registry.c / engine.c).
+public enum EmulatorEngine: String, CaseIterable, Identifiable, Sendable {
+    case legacy                       // the stock Google Android emulator (default)
+    case angle                        // patched gfxstream build: guest GLES 3.1 via ANGLE->Vulkan, so the
+                                      // Google Play sign-in WebView works on macOS
+    public var id: String { rawValue }
+}
+
 /// Everything the launcher lets a user set on an instance.
 public struct InstanceSettings: Equatable, Sendable {
     public var cores: Int
@@ -57,26 +75,31 @@ public struct InstanceSettings: Equatable, Sendable {
     public var landscape: Bool
     public var gpu: GPUMode
     public var dns: String         // "" = the Mac's
+    public var networkMode: NetworkMode
+    public var bridgeIf: String    // bridged: the Mac interface to bridge (e.g. "en0"); "" = default
     public var stayAwake: Bool
     public var lean: Bool
     public var fps: Int
     public var audio: Bool
     public var rooted: Bool
+    public var engine: EmulatorEngine
 
     public init(cores: Int, ramMB: Int, dataGB: Int, resolution: Resolution, width: Int, height: Int, dpi: Int,
                 landscape: Bool, gpu: GPUMode, dns: String, stayAwake: Bool, lean: Bool, fps: Int, audio: Bool,
-                rooted: Bool = false) {
+                rooted: Bool = false, networkMode: NetworkMode = .nat, bridgeIf: String = "",
+                engine: EmulatorEngine = .legacy) {
         self.cores = cores; self.ramMB = ramMB; self.dataGB = dataGB; self.resolution = resolution
         self.width = min(width, height); self.height = max(width, height); self.dpi = dpi
         self.landscape = landscape; self.gpu = gpu; self.dns = dns; self.stayAwake = stayAwake; self.lean = lean
         self.fps = fps; self.audio = audio; self.rooted = rooted
+        self.networkMode = networkMode; self.bridgeIf = bridgeIf; self.engine = engine
     }
 
     public static func defaults(profile: Profile) -> InstanceSettings {
         let s = profile.resolution.size!
         return InstanceSettings(cores: profile.cores, ramMB: profile.ramMB, dataGB: profile == .performance ? 16 : 8,
                                 resolution: profile.resolution, width: s.width, height: s.height, dpi: s.dpi,
-                                landscape: false, gpu: .host, dns: "", stayAwake: true, lean: true, fps: 60,
+                                landscape: false, gpu: .host, dns: "", stayAwake: true, lean: false, fps: 60,
                                 audio: true, rooted: false)
     }
 
@@ -107,7 +130,11 @@ public struct InstanceSettings: Equatable, Sendable {
         if !stayAwake { a.append("--no-stay-awake") }
         if !lean { a.append("--no-lean") }
         if !audio { a.append("--no-audio") }
-        if rooted { a.append("--root") }
+        // Root is NOT a create flag: it needs a boot + ramdisk patch, so AppModel.create() runs it as a
+        // second step (applyRoot) after the instance exists, with its own progress.
+        if networkMode != .nat { a += ["--network-mode", networkMode.rawValue] }
+        if !bridgeIf.isEmpty { a += ["--bridge-if", bridgeIf] }
+        if engine != .legacy { a += ["--engine", engine.rawValue] }
         return a
     }
 
@@ -122,6 +149,9 @@ public struct InstanceSettings: Equatable, Sendable {
         if dpi != old.dpi { a += ["--dpi", "\(dpi)"] }
         if gpu != old.gpu { a += ["--gpu", gpu.rawValue] }
         if dns != old.dns { a += dns.isEmpty ? ["--no-dns"] : ["--dns", dns] }
+        if networkMode != old.networkMode { a += ["--network-mode", networkMode.rawValue] }
+        if bridgeIf != old.bridgeIf { a += ["--bridge-if", bridgeIf] }
+        if engine != old.engine { a += ["--engine", engine.rawValue] }
         if stayAwake != old.stayAwake { a.append(stayAwake ? "--stay-awake" : "--no-stay-awake") }
         if lean != old.lean { a.append(lean ? "--lean" : "--no-lean") }
         if fps != old.fps { a += ["--fps", "\(fps)"] }

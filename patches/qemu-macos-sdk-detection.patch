@@ -1,0 +1,30 @@
+diff --git a/android/scripts/unix/gen-android-sdk-toolchain.sh b/android/scripts/unix/gen-android-sdk-toolchain.sh
+index 4d2340f..1ac34eb 100755
+--- a/android/scripts/unix/gen-android-sdk-toolchain.sh
++++ b/android/scripts/unix/gen-android-sdk-toolchain.sh
+@@ -785,7 +785,7 @@ get_osx_sysroot() {
+     OSX_SDK_SUPPORTED="13.3 15.2 15.5 26.0 26.2 26.4"
+     OSX_XCODE=$(xcodebuild -version | tr '\n' ' ')
+     OSX_SDK_INSTALLED_LIST=$(xcodebuild -showsdks 2>/dev/null | \
+-            egrep --color=never -o " macosx\d+.\d+$" | sed -e "s/.*macosx//g" | sort -n | \
++            grep --color=never -oE 'macosx[0-9]+\.[0-9]+' | sed -e "s/macosx//g" | sort -u -t. -k1,1n -k2,2n | \
+             tr '\n' ' ')
+ 
+     if [ -z "$OSX_SDK_INSTALLED_LIST" ]; then
+@@ -802,6 +802,16 @@ get_osx_sysroot() {
+         fi
+     done
+ 
++    # SoulX: the supported list lags behind new macOS SDKs (it stops at 26.4 while Xcode 26.6 ships 26.5).
++    # When none of the listed SDKs is installed, use the newest installed one instead of failing.
++    if [ -z "$OSX_SDK_VERSION" ]; then
++        OSX_SDK_VERSION=$(echo "$OSX_SDK_INSTALLED_LIST" | tr ' ' '\n' | grep -E '^[0-9]' | \
++                sort -t. -k1,1n -k2,2n | tail -1)
++        if [ -n "$OSX_SDK_VERSION" ]; then
++            log "OSX: no SDK from the supported list [$OSX_SDK_SUPPORTED] is installed; using the newest installed SDK $OSX_SDK_VERSION"
++        fi
++    fi
++
+     OSX_XCODE_VERSION=$(xcodebuild -version | egrep 'Xcode (\d+.\d+)' | sed 's/Xcode //g')
+     VERSION_SORT=$(printf "$MIN_XCODE\n$OSX_XCODE_VERSION" | sort --version-sort | head -n 1)
+ 

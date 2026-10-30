@@ -116,6 +116,14 @@ target_link_libraries(soulx PRIVATE soulx_core)
 
 install(TARGETS soulx RUNTIME DESTINATION bin)
 
+# soulx_netd: a small privileged helper, installed once as a LaunchDaemon, that bridges an instance's
+# Wi-Fi (wlan0) to an Apple vmnet interface for Host-only / Bridged networking. It is a separate binary
+# with its own main() — kept out of soulx_core's glob by living in platform/macos/netd/ — and links vmnet.
+add_executable(soulx_netd ${SOULX_SRC}/platform/macos/netd/soulx_netd.c)
+target_compile_options(soulx_netd PRIVATE ${SOULX_WARNINGS})
+target_link_libraries(soulx_netd PRIVATE "-framework vmnet")
+install(TARGETS soulx_netd RUNTIME DESTINATION libexec)
+
 # Unit tests: one executable and one CTest test per tests/macos/test_*.c (or .m), linked with soulx_core.
 # 'cmake --build build/macos --target soulx_tests' builds them all; 'ctest' runs them.
 option(SOULX_BUILD_TESTS "Build the macOS unit tests" ON)

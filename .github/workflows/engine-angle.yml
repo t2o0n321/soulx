@@ -1,0 +1,97 @@
+name: engine-angle
+
+# Build and publish SoulX's patched "angle" Android emulator (self-built from AOSP emu-main-dev with the
+# gfxstream + macOS-SDK patches in patches/). This is a full emulator build — hours and tens of GB — so it
+# runs ONLY when an engine tag is pushed, never on an ordinary commit.
+#
+# Release flow:
+#   1. Bump SOULX_REV in scripts/build_angle_emulator.sh if the patches changed for the same emulator base.
+#   2. Push a tag  engine-angle-<emuver>-soulx<N>  (e.g. engine-angle-37.3.6-soulx1). <emuver> MUST equal
+#      external/qemu's Pkg.Revision for the pinned manifest, and <N> == SOULX_REV, so the zip name and the
+#      runtime.c URL line up.
+#   3. This workflow builds, signs and attaches the zip to a GitHub Release of that tag.
+#   4. Read the SHA-1/size it prints and pin them in source/platform/macos/runtime.c (k_angle_package),
+#      then cut an app release (release.yml) so the shipped app can verify the download.
+#      (The zip's SHA-1 changes on every rebuild — ad-hoc signature + build timestamps — so it cannot be
+#      pinned ahead of time.)
+#
+# If a standard hosted runner runs out of RAM (QtWebEngine is memory-hungry) or disk, switch runs-on to a
+# larger macOS runner, or run scripts/build_angle_emulator.sh on a self-hosted Apple-Silicon runner.
+
+on:
+  push:
+    tags: ['engine-angle-*']
+  workflow_dispatch: {}
+
+concurrency:
+  group: engine-angle-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-26
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Free runner disk (the emulator source + build tree needs tens of GB)
+        run: |
+          df -h / || true
+          active="$(xcode-select -p | sed 's,/Contents/Developer$,,')"
+          for x in /Applications/Xcode_*.app /Applications/Xcode.app; do
+            [ -e "$x" ] || continue
+            [ "$x" = "$active" ] && { echo "keeping active $x"; continue; }
+            echo "removing $x"; sudo rm -rf "$x" || true
+          done
+          sudo rm -rf ~/Library/Developer/CoreSimulator "$HOME"/Library/Developer/Xcode/*DeviceSupport || true
+          df -h / || true
+
+      - name: Build + patch + sign + package the angle emulator
+        run: ./scripts/build_angle_emulator.sh
+
+      - name: Checksum / manifest
+        id: pkg
+        run: |
+          cat build/angle-emulator/emulator-angle.manifest
+          zip="$(ls build/angle-emulator/emulator-angle-*-darwin_aarch64.zip)"
+          echo "zip=$zip" >> "$GITHUB_OUTPUT"
+          echo "sha1=$(shasum -a 1 "$zip" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+          echo "size=$(stat -f%z "$zip")" >> "$GITHUB_OUTPUT"
+          {
+            echo "### angle emulator built"
+            echo '```'
+            cat build/angle-emulator/emulator-angle.manifest
+            echo '```'
+            echo "Pin \`size\` and \`sha1\` into runtime.c k_angle_package, then release the app."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Publish to the Release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          zip='${{ steps.pkg.outputs.zip }}'
+          notes="SoulX \"angle\" Android emulator — self-built from AOSP emu-main-dev with the patches in
+          patches/ (gfxstream -share-vid Vulkan readback + macOS SDK detection). Downloaded on demand by
+          \`soulx setup --engine angle\`.
+
+          SHA-1: ${{ steps.pkg.outputs.sha1 }}
+          Size:  ${{ steps.pkg.outputs.size }}
+
+          Rebuild from source: scripts/build_angle_emulator.sh in this repo (AOSP is Apache-2.0; the bundled
+          QEMU is GPLv2 and is built from that script's pinned sources). Pin the SHA-1/size above into
+          source/platform/macos/runtime.c before cutting the matching app release."
+          gh release create "$GITHUB_REF_NAME" "$zip" --title "angle emulator $GITHUB_REF_NAME" \
+            --notes "$notes" --verify-tag \
+          || gh release upload "$GITHUB_REF_NAME" "$zip" --clobber
+
+      - name: Upload as a workflow artifact (fallback when run without a tag)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: emulator-angle
+          path: build/angle-emulator/emulator-angle-*-darwin_aarch64.zip
+          if-no-files-found: ignore

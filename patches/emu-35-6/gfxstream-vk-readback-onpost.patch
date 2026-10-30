@@ -1,0 +1,30 @@
+diff --git a/host/FrameBuffer.cpp b/host/FrameBuffer.cpp
+index 789c8b7..304eea9 100644
+--- a/host/FrameBuffer.cpp
++++ b/host/FrameBuffer.cpp
+@@ -1884,6 +1884,15 @@ AsyncResult FrameBuffer::postImpl(HandleType p_colorbuffer, Post::CompletionCall
+                 if (status == ReadbackWorker::DoNextReadbackResult::OK_READY_FOR_READ) {
+                     doPostCallback(iter.second.img, iter.first);
+                 }
++            } else if (!m_emulationGl && m_emulationVk) {
++                // SoulX: Vulkan-only host (GuestAngle). There is no GL readback
++                // worker, so read the composed Vulkan color buffer straight into the
++                // onPost buffer. This is what lets -share-vid feed SoulX's Metal
++                // window while the guest renders GLES through ANGLE->Vulkan.
++                cb->readToBytes(0, 0, iter.second.width, iter.second.height, GL_RGBA,
++                                GL_UNSIGNED_BYTE, iter.second.img,
++                                (uint64_t)iter.second.width * iter.second.height * 4);
++                doPostCallback(iter.second.img, iter.first);
+             } else {
+     #if GFXSTREAM_ENABLE_HOST_GLES
+                 cb->glOpReadback(iter.second.img, iter.second.readBgra);
+@@ -1940,6 +1949,9 @@ void FrameBuffer::ensureReadbackWorker() {
+ #if GFXSTREAM_ENABLE_HOST_GLES
+     if (!m_readbackWorker) {
+         if (!m_emulationGl) {
++            // SoulX: Vulkan-only host (GuestAngle) has no GL readback worker; the
++            // onPost path reads Vulkan color buffers directly, so don't abort here.
++            if (m_emulationVk) return;
+             GFXSTREAM_ABORT(FatalError(ABORT_REASON_OTHER)) << "GL/EGL emulation not enabled.";
+         }
+         m_readbackWorker = m_emulationGl->getReadbackWorker();

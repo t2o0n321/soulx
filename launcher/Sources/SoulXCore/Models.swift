@@ -17,11 +17,14 @@ public struct Instance: Decodable, Identifiable, Equatable, Sendable {
     public let landscape: Bool
     public let gpu: String
     public let dns: String
+    public let networkMode: String        // "nat" (default) | "host" | "bridged"
+    public let bridgeIf: String           // bridged: the Mac interface to bridge, "" = default
     public let stayAwake: Bool
     public let lean: Bool
     public let fps: Int
     public let audio: Bool
     public let rooted: Bool
+    public let engine: String             // "legacy" (default) | "angle"
     public let rootStatus: String?        // "active", "inactive", "ready", "missing", or nil
     public let serial: String?
     public let pid: Int?
@@ -35,7 +38,8 @@ public struct Instance: Decodable, Identifiable, Equatable, Sendable {
 
     enum CodingKeys: String, CodingKey {
         case number = "id", name, state, image, android, cores, ramMB = "ram_mb", dataGB = "data_gb", width, height,
-             dpi, landscape, gpu, dns, stayAwake = "stay_awake", lean, fps, audio, rooted,
+             dpi, landscape, gpu, dns, networkMode = "network_mode", bridgeIf = "bridge_if",
+             stayAwake = "stay_awake", lean, fps, audio, rooted, engine,
              rootStatus = "root_status", serial, pid, headless,
              windowPid = "window_pid", runningScript = "running_script", networkCapturePath = "network_capture_path",
              filesDir = "files_dir"
@@ -57,12 +61,15 @@ public struct Instance: Decodable, Identifiable, Equatable, Sendable {
         landscape = try c.decode(Bool.self, forKey: .landscape)
         gpu = try c.decode(String.self, forKey: .gpu)
         dns = try c.decodeIfPresent(String.self, forKey: .dns) ?? ""
+        networkMode = try c.decodeIfPresent(String.self, forKey: .networkMode) ?? "nat"
+        bridgeIf = try c.decodeIfPresent(String.self, forKey: .bridgeIf) ?? ""
         stayAwake = try c.decode(Bool.self, forKey: .stayAwake)
         lean = try c.decode(Bool.self, forKey: .lean)
         // older CLIs did not report these: their defaults
         fps = try c.decodeIfPresent(Int.self, forKey: .fps) ?? 60
         audio = try c.decodeIfPresent(Bool.self, forKey: .audio) ?? true
         rooted = try c.decodeIfPresent(Bool.self, forKey: .rooted) ?? false
+        engine = try c.decodeIfPresent(String.self, forKey: .engine) ?? "legacy"
         rootStatus = try c.decodeIfPresent(String.self, forKey: .rootStatus)
         serial = try c.decodeIfPresent(String.self, forKey: .serial)
         pid = try c.decodeIfPresent(Int.self, forKey: .pid)
@@ -79,7 +86,9 @@ public struct Instance: Decodable, Identifiable, Equatable, Sendable {
                          resolution: Resolution.matching(width: width, height: height, dpi: dpi),
                          width: width, height: height,
                          dpi: dpi, landscape: landscape, gpu: GPUMode(rawValue: gpu) ?? .host, dns: dns,
-                         stayAwake: stayAwake, lean: lean, fps: fps, audio: audio, rooted: rooted)
+                         stayAwake: stayAwake, lean: lean, fps: fps, audio: audio, rooted: rooted,
+                         networkMode: NetworkMode(rawValue: networkMode) ?? .nat, bridgeIf: bridgeIf,
+                         engine: EmulatorEngine(rawValue: engine) ?? .legacy)
     }
 }
 
