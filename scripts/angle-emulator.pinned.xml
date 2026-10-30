@@ -21,6 +21,7 @@
   <project name="platform/external/curl" path="external/curl" revision="1da4b04273638c8afe6f88bd7a7ccfb693640773" upstream="emu-main-dev" dest-branch="emu-main-dev"/>
   <project name="platform/external/dtc" path="external/dtc" revision="ea98781975c28111bc55f915c83edc164ae069d4" upstream="emu-main-dev" dest-branch="emu-main-dev"/>
   <project name="platform/external/flatbuffers" path="external/flatbuffers" revision="a551e2263a3f5036b46502aa6822257ed1a8a49f" upstream="emu-main-dev" dest-branch="emu-main-dev"/>
+  <project name="platform/external/flex" path="external/flex" revision="104fbfc36067cd630eff3430ee9736febbe26956" upstream="emu-main-dev" dest-branch="emu-main-dev" groups="notdefault,platform-darwin,platform-linux"/>
   <project name="platform/external/fmtlib" path="external/fmtlib" revision="246368ddc2535f35d613cb6152a89cd6c2289f8f" upstream="emu-main-dev" dest-branch="emu-main-dev"/>
   <project name="platform/external/gfxstream-protocols" path="external/gfxstream-protocols" revision="9bc1eed18fdb082e78966ecb9324a08f7cd8d76f" upstream="emu-main-dev" dest-branch="emu-main-dev"/>
   <project name="platform/external/google-benchmark" path="external/google-benchmark" revision="1bff076dad8a0cbb740e7f68586d59c3bb3e1bfd" upstream="emu-main-dev" dest-branch="emu-main-dev"/>
@@ -59,11 +60,17 @@
   <project name="platform/prebuilts/android-emulator-build/mesa-deps" path="prebuilts/android-emulator-build/mesa-deps" revision="17837fdb1889014fa01cbbbda56afc9b6034815f" upstream="emu-main-dev" dest-branch="emu-main-dev" clone-depth="1"/>
   <project name="platform/prebuilts/android-emulator-build/qemu-android-deps" path="prebuilts/android-emulator-build/qemu-android-deps" revision="b06aee625002d0738c5576bbf437b9378229bef0" upstream="emu-main-dev" dest-branch="emu-main-dev" clone-depth="1"/>
   <project name="platform/prebuilts/android-emulator-build/qt" path="prebuilts/android-emulator-build/qt" revision="f2d41b8d15c2a628e95c2e755ed92186d03b763c" upstream="emu-main-dev" dest-branch="emu-main-dev" clone-depth="1"/>
+  <project name="platform/prebuilts/bazel/darwin-x86_64" path="prebuilts/bazel/darwin-x86_64" revision="b1630d780be4131f5bac61c5a9f7c9ee0387c5aa" upstream="emu-main-dev" dest-branch="emu-main-dev" groups="notdefault,platform-darwin" clone-depth="1"/>
+  <project name="platform/prebuilts/clang/host/darwin-x86" path="prebuilts/clang/host/darwin-x86" revision="e2bc28e932ee975749aece4407a2c1a3dbc35492" upstream="emu-main-dev" dest-branch="emu-main-dev" groups="notdefault,platform-darwin" clone-depth="1"/>
+  <project name="platform/prebuilts/cmake/darwin-x86" path="prebuilts/cmake/darwin-x86" revision="d2cbb801268ab9d166f86f7c366a41ebea82b762" upstream="emu-main-dev" dest-branch="emu-main-dev" groups="notdefault,platform-darwin" clone-depth="1"/>
+  <project name="platform/prebuilts/ninja/darwin-x86" path="prebuilts/ninja/darwin-x86" revision="c33943dfc7058ac5ff4021d031dae4cbd926c743" upstream="emu-main-dev" dest-branch="emu-main-dev" groups="notdefault,platform-darwin" clone-depth="1"/>
+  <project name="platform/prebuilts/python/darwin-x86" path="prebuilts/python/darwin-x86" revision="8a7b323c92153acc4390bf71392dec2dbb10f4f5" upstream="emu-main-dev" dest-branch="emu-main-dev" groups="notdefault,platform-darwin" clone-depth="1"/>
   <project name="platform/tools/buildSrc" path="tools/buildSrc" revision="84f5a11087cc9fcd353ccd6cfc490fb2a226948e" upstream="emu-main-dev" dest-branch="emu-main-dev"/>
   <project name="platform/tools/emulator" path="tools/emulator" revision="0861a1ad273555d0eb3bd1abffa4912d9d24bc2c" upstream="emu-main-dev" dest-branch="emu-main-dev"/>
   <project name="platform/tools/netsim" path="tools/netsim" revision="c4297ba555eb804cd76ae3ad35227ae09a947595" upstream="emu-main-dev" dest-branch="emu-main-dev"/>
   <project name="platform/tools/repohooks" path="tools/repohooks" revision="ee593394dd36395f0f9433b738abf1859e92193d" upstream="main" dest-branch="main" groups="developers,tools"/>
   <project name="platform/tools/rootcanal" path="tools/rootcanal" revision="96f4f4e243fc47baeca49fca4584ecff9bd0ff4a" upstream="emu-main-dev" dest-branch="emu-main-dev"/>
+  <project name="toolchain/m4" path="external/m4" revision="4c63838f0ccd1a8850a3d17f31c3427668a78a23" upstream="emu-main-dev" dest-branch="emu-main-dev" groups="notdefault,platform-darwin,platform-linux"/>
   <project name="trusty/external/qemu-libslirp" path="external/libslirp" revision="6559d5fa78a9afc4e21cffdad4b91e45265d359b" upstream="emu-main-dev" dest-branch="emu-main-dev"/>
   
   <repo-hooks in-project="platform/tools/repohooks" enabled-list="pre-upload"/>

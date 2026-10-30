@@ -193,6 +193,11 @@ build() {
 
 write_pinned_manifest() {
   cd "$BUILD_DIR"
+  # Pin the host-platform (platform-darwin) group too: the build needs the darwin host prebuilts — python,
+  # clang, cmake, ninja, bazel — which are marked "notdefault,platform-darwin". `repo sync` adds the host
+  # platform group automatically, but `repo manifest` only honours manifest.groups, so without this the pin
+  # omits them and a CI sync from the pin has no python/clang/... ("rebuild.sh: .../python3: No such file").
+  repo init -g default,platform-darwin >/dev/null
   repo manifest -r -o "$PINNED_MANIFEST"
   log "pinned manifest written to $PINNED_MANIFEST (commit it)"
 }
