@@ -68,9 +68,11 @@ fetch_source() {
     log "using pinned manifest for a deterministic sync"
     cp "$PINNED_MANIFEST" .repo/manifests/soulx-pinned.xml
     repo init -m soulx-pinned.xml
-  fi
-  # Skip projects this build never uses (~47 GB, mostly system-images). See the file's own comment.
-  if [ -f "$LOCAL_MANIFEST" ]; then
+    # The pinned manifest is captured AFTER the trim below has already removed those projects, so it does not
+    # list them at all. Applying the trim manifest on top then fails ("remove-project element specifies
+    # non-existent project"), so only trim when there is no pin — the pin is already the trimmed set.
+  elif [ -f "$LOCAL_MANIFEST" ]; then
+    # Skip projects this build never uses (~47 GB, mostly system-images). See the file's own comment.
     mkdir -p .repo/local_manifests
     cp "$LOCAL_MANIFEST" .repo/local_manifests/soulx-trim.xml
   fi
