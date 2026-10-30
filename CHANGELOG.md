@@ -5,6 +5,8 @@ scripts/versioning/ turn it into the release's section, which becomes the text o
 
 ## Unreleased
 
+## v26.10.5 (2026-10-31)
+
 - **Dual engine — Google Play sign-in**: each instance can run on a new **Angle** engine instead of the standard
   one. Angle renders the guest through ANGLE (guest OpenGL ES 3.1), which the Google account / Play sign-in
   WebView needs on macOS, so you can sign in without root and without dropping to software rendering. Choose it
