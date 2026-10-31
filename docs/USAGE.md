@@ -77,6 +77,7 @@ These options work with every command that acts on an instance:
 | `-i NAME`, `--instance NAME` | the instance to use (default: `$SOULX_INSTANCE`, else `default`) |
 | `-v`, `--verbose` | print debug output |
 | `-h`, `--help` | show the command's help |
+| `-V`, `--version` | print the version and exit (top level, no command; same as `soulx version`) |
 
 `adb`, `logcat` and `shell` pass every other word to adb, so `-v` and `-h` go to adb there. Only `-i NAME` is read by
 SoulX for those commands.
@@ -191,14 +192,15 @@ Android runtime is not included. The instance itself is not changed. `--force` r
 that has the runtime installed. Every file is checked against the checksums stored in the export before the instance is
 added; when anything fails, nothing is left behind. An existing instance is never replaced: when the name is taken, give
 another with `--name`. Scripts go to the new instance's scripts folder; keymaps you already have are kept.
-`--inspect` only shows what the file holds.
+`--inspect` only shows what the file holds (add `--json` for a machine-readable listing).
 
 **`soulx list [--json]`** lists your instances: id, name, state, Android version, CPUs, RAM, screen and adb serial.
 
 **`soulx status [name] [--json]`** shows one instance: state, Android version, hardware, screen, adb serial, engine pid,
 uptime, memory use and log file.
 
-**`soulx usage [name]`** shows a running instance's guest RAM and storage use, measured inside Android.
+**`soulx usage [name] [--json]`** shows a running instance's guest RAM and storage use, measured inside Android. With
+`--json` it prints `{"mem_used_mb", "mem_total_mb", "storage_used_mb", "storage_total_mb", "host_storage_mb"}`.
 
 **`soulx start [name] [--headless] [--cold] [--no-wait] [--timeout S]`** starts an instance, waits until Android has
 booted, then opens the window.
@@ -261,7 +263,8 @@ A bare number is a key code, not a digit: use `KEYCODE_0`..`KEYCODE_9` to type d
 
 **`soulx volume [-i NAME] [0-100|mute|unmute] [--json]`** shows or sets the media volume of a running instance (the
 sound games play). It applies right away, without a restart. `mute` silences the instance and `unmute` brings the
-previous level back. To remove the sound device altogether, use `soulx config --no-audio`.
+previous level back. To remove the sound device altogether, use `soulx config --no-audio`. With `--json`, it prints
+the resulting media volume as JSON.
 
 **`soulx stats [name] [--json] [--watch] [--interval MS]`** measures the CPU and memory use of every running instance,
 or only of the named one, over one interval.
@@ -310,8 +313,9 @@ the script.
 | `--speed X` | playback speed 0.1–10 (default 1): every `sleep()` and replay pause is divided by X |
 
 **`soulx scripts [-i NAME] [list|folder|import PATH...|remove ENTRY|rename FILE NAME] [--json]`** manages the
-instance's scripts (see [Scripts per instance](#scripts-per-instance)). `import` copies .lua files or script
-folders in, `remove` moves an entry to the Trash, `rename` sets the name a script shows (its `-- name:` line).
+instance's scripts (see [Scripts per instance](#scripts-per-instance)). `list` (the default) prints the instance's
+scripts and `folder` prints its scripts-folder path; `import` copies .lua files or script folders in, `remove` moves
+an entry to the Trash, `rename` sets the name a script shows (its `-- name:` line). `--json` prints the result as JSON.
 
 **`soulx record [-i NAME] <out.lua> [--force]`** records your taps, swipes, long presses, keys and the pauses between
 them as a Lua script. Ctrl+C stops recording. `--force` overwrites an existing file.
@@ -331,9 +335,13 @@ verbatim. Examples: `soulx adb shell getprop ro.build.version.release`, `soulx a
 with 1 when the console answers KO. Examples: `soulx console geo fix -122.084 37.422` (longitude, then latitude),
 `soulx console power capacity 15`.
 
-**`soulx net <status|install|uninstall>`** manages the privileged network helper (`soulx_netd`, a LaunchDaemon) that
-[Host-only and Bridged](#networking) networking use. NAT, the default, does not use it, and SoulX installs the helper
-by itself the first time an instance needs it.
+**`soulx net <status|install|uninstall> [--json]`** manages the privileged network helper (`soulx_netd`, a LaunchDaemon)
+that [Host-only and Bridged](#networking) networking use. NAT, the default, does not use it, and SoulX installs the
+helper by itself the first time an instance needs it. With `--json`, `status` prints `{"installed": true|false}`.
+
+**v1.0 compatibility.** The old single-flag forms still work, one per run: `--create NAME`, `--start NAME`,
+`--stop NAME`, `--list`, `--delete NAME`, `--install NAME APK`, `--adb NAME "ARGS"`, `--help`, `--version`. Prefer the
+subcommands above; these are kept only so scripts written for SoulX v1.0 keep running.
 
 ## Instances and their settings
 
