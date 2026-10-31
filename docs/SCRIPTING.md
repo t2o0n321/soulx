@@ -178,6 +178,7 @@ soulx run [-i NAME] [--repeat N | --loop] [--speed X] script.lua [args...]
 - **`soulx` table**: every function below is also available as `soulx.<name>`
   (`soulx.tap(10, 20)`), which helps when a local variable hides a global one
   (`local key = ...` hides `key()` in its scope). `soulx.version` is SoulX's version.
+  `soul` is a legacy alias of the `soulx` table (the name before the rename); it still works, but prefer `soulx`.
 
 ---
 
@@ -215,7 +216,7 @@ value out of range or an unknown option raises an error naming the function and 
 | [Touch](#touch) | `tap`, `long_press`, `swipe`, `touch_down`, `touch_move`, `touch_up` |
 | [Keys and text](#keys-and-text) | `key`, `text` |
 | [Time and output](#time-and-output) | `sleep`, `speed`, `iteration`, `millis`, `log`, `print` |
-| [Screen](#screen) | `screen_size`, `color`, `is_color`, `capture`, `find`, `find_all`, `exists`, `wait`, `wait_gone`, `screenshot` |
+| [Screen](#screen) | `screen_size`, `color`, `is_color`, `capture`, `load_image`, `find`, `find_all`, `exists`, `read_text`, `wait`, `wait_gone`, `screenshot` |
 | [Image objects](#image-objects) | `img:size`, `img:color`, `img:find`, `img:find_all`, `img:crop`, `img:save` |
 | [Instances and low level](#instances-and-low-level) | `use`, `console`, `shell` |
 
@@ -230,7 +231,8 @@ launch("com.example.game")
 ```
 
 #### `stop_app(package)`
-Force-stops an app (`am force-stop`). Stopping an app that is not running is not an error.
+Force-stops an app (`am force-stop`). Stopping an app that is not running is not an error, but calling it on a
+package that is not installed raises an error.
 
 #### `install(path [, reinstall])` → package name
 Installs an `.apk`, `.xapk`, `.apks` or `.apkm` file, or a folder of split APKs; OBB files of an
@@ -267,7 +269,7 @@ tap("img/ok.png", {region = {0, 1200, 1080, 1200}})     -- only look in the lowe
 ```
 
 #### `long_press(x, y [, ms])`
-Touches the point for `ms` milliseconds (default 800, at most 60000).
+Touches the point for `ms` milliseconds (1–60000, default 800).
 
 #### `swipe(x1, y1, x2, y2 [, ms])`
 Drags a finger from `(x1, y1)` to `(x2, y2)` in `ms` milliseconds (default 300, 1–60000), with a
@@ -413,8 +415,8 @@ log(string.format("%06X", color(10, 10)))          -- prints e.g. 1E90FF
 ```
 
 #### `is_color(x, y, rgb [, tolerance])` → boolean
-`true` when each of red, green and blue differs from `rgb` by at most `tolerance` (0–255,
-default 16). Safer than `==` because colours vary slightly (gradients, compression, shading).
+`true` when each of red, green and blue of the pixel differs from `rgb` (a `0xRRGGBB` colour, `0..0xFFFFFF`) by at
+most `tolerance` (0–255, default 16). Safer than `==` because colours vary slightly (gradients, compression, shading).
 
 #### `capture()` → Image
 Captures the screen now and returns it as an [Image](#image-objects) (it also becomes the
@@ -504,7 +506,8 @@ screenshot("img/button.png", 440, 1610, 200, 80)    -- make a template
 
 `capture()` and `img:crop()` return Image objects (in RGBA). Their pixels are freed
 automatically when the Image is no longer used; `local img <close> = capture()` frees them as
-soon as the variable goes out of scope.
+soon as the variable goes out of scope. Using an Image after it has been closed (`<close>`) or freed raises an error
+(`"the image has been released"`).
 
 | Method | Result |
 |---|---|
@@ -514,7 +517,7 @@ soon as the variable goes out of scope.
 | `img:find_all(image [, opts])` | like `find_all`, in this image |
 | `img:crop(x, y, w, h)` | a new Image with that rectangle (must lie inside the image) |
 | `img:save(path)` | saves as PNG (relative to the script folder; folders created); returns the absolute path |
-| `tostring(img)` | `"Image(1080x2400)"` |
+| `tostring(img)` | `"Image(1080x2400)"`, or `"Image(released)"` once its pixels have been freed |
 
 An Image can be used wherever a template is expected:
 
@@ -600,6 +603,9 @@ script may override any of them.
   returns truthy; an image → until it appears; `nil` → until `image` is gone. Returns `true`/`false` (timeout).
 - `retry(fn [, times [, pause_ms]])` → runs `fn(i)` until it returns truthy (up to `times`, default 3); returns it.
 - `assert_screen(image [, opts [, msg]])` — error unless `image` is on screen.
+- `find_scaled(image [, scales [, opts]])` → `x, y, score, scale` or `nil` — like `find`, but tries each factor in
+  `scales` (an array, optional; default `{0.8, 0.9, 1.0, 1.1, 1.2}`) and returns the best match with the scale that
+  matched, or `nil` if none passes the threshold. For a template captured at an unknown size.
 
 **Vision (colours and grids — for match‑3 / board games)**
 - `color_dist(a, b)` → squared, green‑weighted distance between two `0xRRGGBB` colours.
@@ -607,8 +613,9 @@ script may override any of them.
   whose **hue** is nearest (`palette = {name = degrees, …}`; `nil` past `max_deg`). Hue ignores brightness and
   saturation, so a tile that is **enhanced, frozen, framed or badged** still matches its base colour — far more
   robust for decorated/variant tiles than nearest‑RGB. (Grey tiles have no hue; fall back to `classify` for those.)
-- `classify(rgb, palette [, max_dist])` → the `palette` key whose colour is nearest `rgb` (`palette = {name = 0xRRGGBB,
-  …}`); `nil` if beyond `max_dist`.
+- `classify(rgb, palette [, max_dist])` → `key, distance` — the `palette` key whose colour is nearest `rgb`
+  (`palette = {name = 0xRRGGBB, …}`) and the squared, green‑weighted colour distance to it; `nil, distance` when the
+  nearest is beyond `max_dist`.
 - `read_grid(x0, y0, dx, dy, cols, rows [, sample])` → `board[r][c] = 0xRRGGBB`, one capture, cell centres at
   `(x0 + (c-1)·dx, y0 + (r-1)·dy)` (1‑based, row‑major). With `sample` > 0 it averages a ±`sample`‑pixel box per
   cell instead of reading the centre pixel, **weighted by saturation** so the colourful body wins and a white glow,
@@ -622,8 +629,10 @@ script may override any of them.
   `{x, y, w, h}` region around the number for speed.
 
 **Gestures**
-- `drag_path(points [, opts])` — drag finger 0 through `points = {{x, y}, …}`; `opts.step_ms` between moves
-  (default 16), `opts.hold_ms` before the first move (default 60). For "swap one tile along a path" games.
+- `drag_path(points [, opts])` → `true`, or `false` when `points` is empty — drag finger 0 through
+  `points = {{x, y}, …}`; `opts.step_ms` between moves (default 16), `opts.hold_ms` before the first move (default 60),
+  `opts.max_step_px` splits a long move into steps no longer than this so the finger keeps up (`nil` = off, the
+  default). For "swap one tile along a path" games.
 
 Example — read a 6×5 board by colour and drag a tile:
 ```lua
